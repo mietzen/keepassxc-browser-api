@@ -19,7 +19,7 @@ import nacl.public
 import nacl.utils
 
 from .config import Association, BrowserConfig
-from .exceptions import AssociationError, NotAssociatedError, ProtocolError
+from .exceptions import AssociationError, KeePassXCError, NotAssociatedError, ProtocolError
 from .models import Entry, Group
 
 logger = logging.getLogger(__name__)
@@ -606,8 +606,12 @@ class BrowserClient:
             "keys": self._get_connection_keys(),
         }
         decrypted = self._send_encrypted("get-database-entries", inner)
-        if not decrypted:
-            return []
+        if decrypted is None:
+            raise KeePassXCError(
+                "get-database-entries failed. "
+                "Make sure 'Allow access to all entries' is enabled in "
+                "KeePassXC → Settings → Browser Integration."
+            )
 
         return [Entry.from_dict(e) for e in decrypted.get("entries", [])]
 
@@ -799,12 +803,14 @@ class BrowserClient:
         KeePassXC application settings.
 
         Note: Unlike other actions, the request is sent unencrypted but the
-        response is encrypted using the session keys.
+        response is encrypted using the session keys.  No association is
+        required — only ``change-public-keys`` must have been exchanged so
+        KeePassXC can encrypt the response.
 
         Returns:
             Generated password string, or None on failure.
         """
-        if not self._ensure_session():
+        if not self._ensure_keys():
             return None
         nonce = nacl.utils.random(nacl.public.Box.NONCE_SIZE)
         msg = {

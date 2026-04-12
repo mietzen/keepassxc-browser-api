@@ -94,6 +94,7 @@ class BrowserClient:
         self.config = config
         self._socket: socket.socket | None = None
         self._server_public_key: nacl.public.PublicKey | None = None
+        self._associated: bool = False
 
         if config.client_public_key and config.client_secret_key:
             sk_bytes = _b64decode(config.client_secret_key)
@@ -141,14 +142,17 @@ class BrowserClient:
                 pass
             self._socket = None
             self._server_public_key = None
+            self._associated = False
 
     def _ensure_session(self) -> bool:
-        """Ensure there is an active connection with completed key exchange.
+        """Ensure there is an active connection with a verified association.
 
-        Automatically connects and exchanges public keys if needed.
+        Automatically connects, exchanges public keys, and runs test-associate
+        if needed. KeePassXC requires test-associate after every key exchange
+        before it will serve authenticated requests.
         Returns True if the session is ready, False on failure.
         """
-        if self._socket and self._server_public_key:
+        if self._socket and self._server_public_key and self._associated:
             return True
         if not self._socket:
             if not self.connect():
@@ -156,14 +160,40 @@ class BrowserClient:
         if not self._server_public_key:
             if not self.change_public_keys():
                 return False
+        if not self._associated:
+            if not self._run_test_associate():
+                return False
         return True
+
+    def _run_test_associate(self) -> bool:
+        """Run test-associate for all stored associations.
+
+        KeePassXC resets its internal m_associated flag on every key exchange.
+        This must be called after change_public_keys() before any authenticated
+        request (get-logins, set-login, lock-database, etc.).
+        Returns True if at least one association is still valid.
+        """
+        if not self.config.associations:
+            logger.warning("No associations stored — run setup() first")
+            return False
+        for association in self.config.associations.values():
+            if self.test_associate(association):
+                self._associated = True
+                return True
+        logger.warning("All stored associations are invalid — re-run setup()")
+        return False
 
     # ------------------------------------------------------------------
     # Low-level messaging
     # ------------------------------------------------------------------
 
     def _send_json(self, msg: dict) -> dict | None:
-        """Send a JSON message and read the JSON response."""
+        """Send a JSON message and read the JSON response.
+
+        KeePassXC may send additional broadcast messages (e.g. ``database-locked``)
+        immediately after the real response, concatenated in the same recv buffer.
+        We parse only the first complete JSON object and discard the rest.
+        """
         if not self._socket:
             return None
 
@@ -181,8 +211,11 @@ class BrowserClient:
             response_data = self._socket.recv(1024 * 1024)
             if not response_data:
                 return None
-            return json.loads(response_data)
-        except (OSError, json.JSONDecodeError) as e:
+            # Use JSONDecoder to parse only the first object; ignore any
+            # trailing data (e.g. an unsolicited database-locked broadcast).
+            obj, _ = json.JSONDecoder().raw_decode(response_data.decode("utf-8"))
+            return obj
+        except (OSError, json.JSONDecodeError, ValueError) as e:
             logger.error("Failed to read response: %s", e)
             return None
 
@@ -238,7 +271,7 @@ class BrowserClient:
         if not response:
             return None
         if "errorCode" in response:
-            logger.debug("Error response for %s: %s (code %s)", action, response.get("error"), response.get("errorCode"))
+            logger.warning("Error response for %s: %s (code %s)", action, response.get("error"), response.get("errorCode"))
             return None
 
         resp_nonce_b64 = response.get("nonce", "")
@@ -255,7 +288,11 @@ class BrowserClient:
     # ------------------------------------------------------------------
 
     def change_public_keys(self) -> bool:
-        """Perform NaCl key exchange with KeePassXC."""
+        """Perform NaCl key exchange with KeePassXC.
+
+        KeePassXC resets its m_associated flag on every key exchange, so
+        test-associate must be called again afterwards.
+        """
         nonce = nacl.utils.random(nacl.public.Box.NONCE_SIZE)
         msg = {
             "action": "change-public-keys",
@@ -278,6 +315,7 @@ class BrowserClient:
             return False
 
         self._server_public_key = nacl.public.PublicKey(_b64decode(server_pk_b64))
+        self._associated = False  # KeePassXC resets m_associated on key exchange
         logger.debug("Key exchange successful")
         return True
 

@@ -645,6 +645,27 @@ class BrowserClient:
         decrypted = self._send_encrypted("lock-database", inner)
         return decrypted is not None
 
+    def request_autotype(self, search: str = "") -> bool:
+        """Trigger KeePassXC's global auto-type for the active window.
+
+        KeePassXC will show an entry picker if multiple matches are found,
+        or auto-fill immediately when there is exactly one match.
+
+        Does not require an existing association.
+
+        Args:
+            search: Optional search string (e.g. domain) to pre-filter entries.
+                    KeePassXC ignores strings longer than 256 characters.
+
+        Returns:
+            True if KeePassXC accepted the request.
+        """
+        inner: dict = {"action": "request-autotype"}
+        if search:
+            inner["search"] = search
+        decrypted = self._send_encrypted("request-autotype", inner)
+        return decrypted is not None
+
     def generate_password(
         self,
         *,

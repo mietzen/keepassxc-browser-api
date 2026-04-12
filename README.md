@@ -8,7 +8,7 @@ Python library for communicating with [KeePassXC](https://keepassxc.org/) via th
 - One-time association flow (user approves in KeePassXC window)
 - Biometric unlock (TouchID / system unlock) via `triggerUnlock`
 - Full browser API support: read entries, write entries, manage groups, TOTP, password generation, lock database
-- Cross-platform: macOS and Linux (including Flatpak)
+- Cross-platform: macOS and Linux
 - Shared config (`~/.keepassxc/browser-api.json`) — associate once, use with all tools
 
 ## Installation
@@ -65,6 +65,9 @@ client.lock_database()
 | `delete_entry(uuid)` | Delete an entry |
 | `lock_database()` | Lock the database |
 | `generate_password(...)` | Generate a password |
+| `request_autotype(search)` | Trigger KeePassXC global auto-type |
+
+> **Note**: `passkeys-get` and `passkeys-register` are not implemented. They require complex WebAuthn/CBOR data structures and are only available in KeePassXC builds compiled with `WITH_XC_BROWSER_PASSKEYS`.
 
 ### `BrowserConfig`
 
@@ -92,7 +95,3 @@ pytest --cov=keepassxc_browser_api
 # Lint
 ruff check --ignore=E501 --exclude=__init__.py ./keepassxc_browser_api
 ```
-
-## License
-
-MIT

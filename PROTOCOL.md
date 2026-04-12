@@ -289,9 +289,9 @@ On locked DB (without `triggerUnlock`): `errorCode: 1`.
 
 ### `get-logins`
 
-Returns entries whose URL field matches the provided URL. KeePassXC applies its own URL-matching logic. Requires association.
+Returns entries whose URL field matches the provided URL. KeePassXC applies its own URL-matching logic (using `QUrl(siteUrl).host()` for hostname comparison). **Only URL/hostname-based matching is supported** — there is no way to search by entry title or other fields through this action. Requires association.
 
-> Source: [`BrowserAction.cpp#L225`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L225)
+> Source: [`BrowserAction.cpp#L225`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L225) · [`BrowserService.cpp#L1073-L1120`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserService.cpp#L1073)
 
 **Inner request**:
 ```json
@@ -333,6 +333,10 @@ Returns entries whose URL field matches the provided URL. KeePassXC applies its 
 ```
 
 On no matches: `errorCode: 15`. On no association: `errorCode: 8`.
+
+> **Note on `stringFields`**: KeePassXC only includes string fields in the response if the KeePassXC application setting "Support KPH fields" is enabled (Settings → Browser Integration). Additionally, only custom attributes whose key is prefixed with `KPH: ` are included. This is a server-side setting — the client cannot control it.
+>
+> Source: [`BrowserService.cpp#L1217-L1228`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserService.cpp#L1217)
 
 ---
 
@@ -380,10 +384,10 @@ On invalid UUID: `errorCode: 18`. On cancellation: `errorCode: 6`.
 
 ### `get-database-entries`
 
-Returns **all** entries in the database. Requires association and a specific user permission (Settings → Browser Integration → "Allow access to all entries").
+Returns **all** entries in the database. Requires association and a specific user permission: Settings → Browser Integration → "Allow limited access to all entries in connected databases (ignores site access restrictions)".
 
-> Source: [`BrowserAction.cpp#L392`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L392)
-> Note: This action has no constant defined — it is matched as a raw string `"get-database-entries"` in the dispatch chain.
+> Source: [`BrowserAction.cpp#L392`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L392) · [`BrowserSettings.h`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserSettings.h) (`allowGetDatabaseEntriesRequest()`)
+> Note: This action has no constant defined — it is matched as a raw string `"get-database-entries"` in the dispatch chain. Added in KeePassXC 2.7.5 (commit `8a554b37`, 2023-02-25).
 
 **Inner request**:
 ```json
@@ -538,7 +542,9 @@ Client implementations should parse only the first JSON object. Checking for the
 
 ### `generate-password`
 
-Asks KeePassXC to generate a password using its configured generator. **This action is sent unencrypted** (no `message` wrapper), similar to `change-public-keys`. The response is partially encrypted.
+Asks KeePassXC to generate a password using its configured generator. **This action requires GUI interaction** — KeePassXC opens a password generator popup window. The initial response is empty (`{}`); the actual password is sent as a **second message** on the socket only after the user clicks "Apply" in the popup. This makes the action unsuitable for headless or non-interactive use.
+
+**Does not require association** (no `m_associated` check in handler), but does require a prior key exchange (`change-public-keys`) because the response is encrypted.
 
 > Source: [`BrowserAction.cpp#L265`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L265)
 

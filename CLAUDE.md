@@ -13,12 +13,15 @@ Python library implementing the KeePassXC browser extension protocol (NaCl-encry
 
 ### KeePassXC Browser Protocol Details
 
-- Socket: `$TMPDIR/org.keepassxc.KeePassXC.BrowserServer` (macOS), `$XDG_RUNTIME_DIR/app/org.keepassxc.KeePassXC/org.keepassxc.KeePassXC.BrowserServer` (Linux Flatpak)
+See **[PROTOCOL.md](PROTOCOL.md)** for the full protocol reference (wire format, encryption, all actions, error codes, source file links).
+
+Quick summary:
+- Socket: `$TMPDIR/org.keepassxc.KeePassXC.BrowserServer` (macOS), `$XDG_RUNTIME_DIR/.../org.keepassxc.KeePassXC.BrowserServer` (Linux)
 - Every JSON message MUST include a `clientID` field; this library uses `"keepassxc-browser-api"`
 - Key exchange via `change-public-keys` (unencrypted), all subsequent messages use NaCl `crypto_box`
-- `openDatabase(triggerUnlock=true)` is NON-BLOCKING — returns immediately, must poll for unlock
+- `get-databasehash` with `triggerUnlock=true` is NON-BLOCKING — returns immediately, must poll for unlock
 - `test-associate` only works when DB is unlocked
-- Relevant KeePassXC source: `src/browser/BrowserAction.cpp`, `src/browser/BrowserService.cpp`
+- Relevant KeePassXC source: [`src/browser/BrowserAction.cpp`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp)
 
 ### Available API Actions
 

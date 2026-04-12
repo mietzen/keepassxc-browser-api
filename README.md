@@ -80,6 +80,10 @@ config.save()                        # Save to default path
 config.save(path)                    # Save to custom path
 ```
 
+## Protocol documentation
+
+For a detailed description of the KeePassXC browser extension protocol (wire format, encryption, all actions, error codes), see **[PROTOCOL.md](PROTOCOL.md)**.
+
 ## Development
 
 ```shell

@@ -363,10 +363,12 @@ class TestContextManager:
         mock_sock = type("MockSock", (), {"close": lambda self: None, "gettimeout": lambda self: None})()
         client._socket = mock_sock
         client._server_public_key = "fake"
+        client._associated = True
         with client:
             assert client._socket is not None
         assert client._socket is None
         assert client._server_public_key is None
+        assert client._associated is False
 
     def test_ensure_session_already_connected(self):
         config = BrowserConfig()
@@ -374,6 +376,7 @@ class TestContextManager:
         mock_sock = type("MockSock", (), {"close": lambda self: None})()
         client._socket = mock_sock
         client._server_public_key = "fake"
+        client._associated = True
         assert client._ensure_session() is True
 
     def test_ensure_session_no_socket(self):

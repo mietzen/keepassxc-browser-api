@@ -147,9 +147,8 @@ class BrowserClient:
     def _ensure_session(self) -> bool:
         """Ensure there is an active connection with a verified association.
 
-        Automatically connects, exchanges public keys, and runs test-associate
-        if needed. KeePassXC requires test-associate after every key exchange
-        before it will serve authenticated requests.
+        Automatically connects, exchanges public keys, triggers biometric unlock
+        if the database is locked, and verifies the association.
         Returns True if the session is ready, False on failure.
         """
         if self._socket and self._server_public_key and self._associated:
@@ -161,11 +160,32 @@ class BrowserClient:
             if not self.change_public_keys():
                 return False
         if not self._associated:
-            if not self._run_test_associate():
+            if not self._run_test_associate(warn_on_failure=False):
+                # DB may be locked — trigger biometric unlock and retry
+                logger.info("Association failed; triggering database unlock...")
+                if not self.trigger_unlock():
+                    return False
+                # trigger_unlock reconnects and re-exchanges keys internally
+                if not self._run_test_associate():
+                    return False
+        return True
+
+    def _ensure_keys(self) -> bool:
+        """Ensure connection and key exchange only (no association check).
+
+        Used internally by _test_associate_raw to avoid infinite recursion:
+        test_associate must not call _ensure_session which calls _run_test_associate
+        which calls test_associate again.
+        """
+        if not self._socket:
+            if not self.connect():
+                return False
+        if not self._server_public_key:
+            if not self.change_public_keys():
                 return False
         return True
 
-    def _run_test_associate(self) -> bool:
+    def _run_test_associate(self, *, warn_on_failure: bool = True) -> bool:
         """Run test-associate for all stored associations.
 
         KeePassXC resets its internal m_associated flag on every key exchange.
@@ -177,10 +197,11 @@ class BrowserClient:
             logger.warning("No associations stored — run setup() first")
             return False
         for association in self.config.associations.values():
-            if self.test_associate(association):
+            if self._test_associate_raw(association):
                 self._associated = True
                 return True
-        logger.warning("All stored associations are invalid — re-run setup()")
+        if warn_on_failure:
+            logger.warning("All stored associations are invalid — re-run setup()")
         return False
 
     # ------------------------------------------------------------------
@@ -379,15 +400,39 @@ class BrowserClient:
         logger.info("Associated with KeePassXC (id=%s)", assoc_id)
         return association
 
-    def test_associate(self, association: Association) -> bool:
-        """Test if an existing association is still valid."""
+    def _test_associate_raw(self, association: Association) -> bool:
+        """Send test-associate using only connection + key exchange (no association check).
+
+        This is the internal version used by _run_test_associate to avoid infinite
+        recursion: calling test_associate → _send_encrypted → _ensure_session →
+        _run_test_associate → test_associate.
+        """
+        if not self._ensure_keys():
+            return False
         inner = {
             "action": "test-associate",
             "id": association.id,
             "key": association.id_key,
         }
-        result = self._send_encrypted("test-associate", inner)
-        return result is not None
+        nonce = nacl.utils.random(nacl.public.Box.NONCE_SIZE)
+        encrypted = self._encrypt(inner, nonce)
+        msg = {
+            "action": "test-associate",
+            "message": encrypted,
+            "nonce": _b64encode(nonce),
+        }
+        response = self._send_json(msg)
+        if not response or "errorCode" in response:
+            return False
+        resp_nonce_b64 = response.get("nonce", "")
+        resp_message = response.get("message", "")
+        if not resp_nonce_b64 or not resp_message:
+            return False
+        return self._decrypt(resp_message, _b64decode(resp_nonce_b64)) is not None
+
+    def test_associate(self, association: Association) -> bool:
+        """Test if an existing association is still valid."""
+        return self._test_associate_raw(association)
 
     def _get_connection_keys(self) -> list[dict]:
         """Build the keys array from stored associations for authenticated requests."""
@@ -705,12 +750,25 @@ class BrowserClient:
     def lock_database(self) -> bool:
         """Lock the KeePassXC database.
 
+        KeePassXC sends a bare response (no encrypted message) for this action,
+        followed by an unsolicited database-locked broadcast. We check for the
+        absence of an error code rather than trying to decrypt a payload.
+
         Returns:
             True if the lock command was accepted.
         """
+        if not self._ensure_session():
+            return False
         inner = {"action": "lock-database"}
-        decrypted = self._send_encrypted("lock-database", inner)
-        return decrypted is not None
+        nonce = nacl.utils.random(nacl.public.Box.NONCE_SIZE)
+        encrypted = self._encrypt(inner, nonce)
+        msg = {
+            "action": "lock-database",
+            "message": encrypted,
+            "nonce": _b64encode(nonce),
+        }
+        response = self._send_json(msg)
+        return response is not None and "errorCode" not in response
 
     def request_autotype(self, search: str = "") -> bool:
         """Trigger KeePassXC's global auto-type for the active window.

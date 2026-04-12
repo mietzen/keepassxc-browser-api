@@ -145,7 +145,36 @@ All error codes are defined in [`BrowserMessageBuilder.h`](https://github.com/ke
 
 ---
 
-## Actions
+## Broadcast Messages
+
+KeePassXC sends **unsolicited broadcast messages** to all connected clients when the database state changes. These are **unencrypted**, contain no `clientID`, and arrive outside the normal request/response cycle:
+
+| Action | Trigger |
+|---|---|
+| `database-locked` | Database was locked (by user, timeout, or a client's `lock-database` request) |
+| `database-unlocked` | Database was unlocked |
+
+```json
+{ "action": "database-locked" }
+```
+
+> Source: [`BrowserService.cpp#L1727`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserService.cpp#L1727)
+
+**Important**: For `lock-database` specifically, KeePassXC may send the `database-locked` broadcast **before** the encrypted `lock-database` response in the same socket write. Client implementations must handle potentially concatenated JSON objects in a single `recv()` buffer. Use `JSONDecoder.raw_decode()` (Python) or equivalent to parse only the first object.
+
+---
+
+## `m_associated` Flag and Session State
+
+KeePassXC maintains a per-`clientID` `m_associated` boolean that is **reset to `false` on every `change-public-keys`** call. All authenticated actions (`get-logins`, `set-login`, `lock-database`, etc.) check this flag and return `ERROR_KEEPASS_ASSOCIATION_FAILED` (code 8) if it is not set.
+
+**Consequence**: After every key exchange, clients **must** call `test-associate` before making any other authenticated request. Failure to do so returns error 8 silently.
+
+**Recursion hazard**: `test-associate` must NOT be sent through the normal encrypted pipeline if that pipeline itself calls `test-associate` to verify the session — this creates infinite recursion. Implementations must use a lower-level send path (connect + key exchange only, no association check) when sending `test-associate` internally.
+
+> Source: [`BrowserAction.cpp#L134`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L134) (reset on key exchange), [`BrowserAction.cpp#L219`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L219) (set on test-associate success)
+
+---
 
 ### `change-public-keys`
 
@@ -500,14 +529,12 @@ Locks the currently open database. Requires association.
 }
 ```
 
-**Inner response**:
-```json
-{
-  "action": "lock-database"
-}
-```
+**Response quirk**: KeePassXC calls `browserService()->lockDatabase()` before sending the response. This emits `databaseLocked` synchronously, which triggers a `database-locked` broadcast to all clients on the same socket **before** the encrypted `lock-database` response is written. In practice, a single `recv()` may contain `{"action":"database-locked"}{"action":"lock-database","nonce":"...","message":"..."}` concatenated.
+
+Client implementations should parse only the first JSON object. Checking for the absence of `errorCode` (rather than attempting to decrypt a payload) is sufficient to confirm success.
 
 ---
+
 
 ### `generate-password`
 
@@ -591,19 +618,28 @@ They are **not implemented** in this library because the data structures are com
 Client                              KeePassXC
   |                                     |
   |-- change-public-keys (plaintext) -->|  (exchange Curve25519 keys)
-  |<-- change-public-keys (plaintext) --|
+  |<-- change-public-keys (plaintext) --|  (m_associated reset to false)
   |                                     |
-  |-- get-databasehash (triggerUnlock) ->|  (open DB / show TouchID dialog)
+  |-- test-associate ------------------>|  (must come before any auth request)
+  |<-- ERROR: database not opened ------|  (DB locked → trigger unlock)
+  |                                     |
+  |-- get-databasehash (triggerUnlock) ->|  (show TouchID/biometrics dialog)
   |<-- ERROR: database not opened ------|  (non-blocking; poll until unlocked)
   |    ... retry after short delay ...  |
-  |-- get-databasehash (triggerUnlock) ->|
+  |-- get-databasehash ----------------->|
   |<-- get-databasehash (hash: "abc") --|
   |                                     |
-  |-- test-associate ------------------>|  (verify existing association)
-  |<-- test-associate (id: "My App") ---|
+  |-- test-associate ------------------>|  (retry now that DB is open)
+  |<-- test-associate (id: "My App") ---|  (m_associated set to true)
   |                                     |
   |-- get-logins (url: "...") -------->|  (fetch credentials)
   |<-- get-logins (entries: [...]) -----|
 ```
 
-If no association exists, call `associate` after the key exchange step. The user must approve the association in KeePassXC and provide a name for it.
+If no association exists, call `associate` after the key exchange step (and after unlocking). The user must approve the association in KeePassXC and provide a name for it.
+
+**Key rules**:
+1. `test-associate` must be called after every `change-public-keys` — KeePassXC resets `m_associated` on each key exchange.
+2. `test-associate` itself only requires connection + key exchange (not a prior association). Do not route it through session management that itself calls `test-associate`.
+3. If `test-associate` returns error 1 (DB not opened), trigger unlock and retry.
+

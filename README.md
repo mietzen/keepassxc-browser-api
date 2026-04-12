@@ -30,10 +30,8 @@ if not config.associations:
     client.setup()
     config.save()
 
-# Ensure DB is unlocked (triggers TouchID/biometrics if locked)
-client.ensure_unlocked()
-
-# API methods auto-connect when needed
+# API methods auto-connect, auto-unlock (triggers TouchID/biometrics if locked),
+# and verify the association before every call
 entries = client.get_logins("https://example.com")
 for e in entries:
     print(e.name, e.login)

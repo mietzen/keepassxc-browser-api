@@ -349,3 +349,41 @@ class TestGroupModel:
         assert len(flat) == 2
         names = {g.name for g in flat}
         assert names == {"Root", "Work"}
+
+
+# ---------------------------------------------------------------------------
+# Context manager & _ensure_session
+# ---------------------------------------------------------------------------
+
+
+class TestContextManager:
+    def test_context_manager_disconnects(self):
+        config = BrowserConfig()
+        client = BrowserClient(config)
+        mock_sock = type("MockSock", (), {"close": lambda self: None, "gettimeout": lambda self: None})()
+        client._socket = mock_sock
+        client._server_public_key = "fake"
+        with client:
+            assert client._socket is not None
+        assert client._socket is None
+        assert client._server_public_key is None
+
+    def test_ensure_session_already_connected(self):
+        config = BrowserConfig()
+        client = BrowserClient(config)
+        mock_sock = type("MockSock", (), {"close": lambda self: None})()
+        client._socket = mock_sock
+        client._server_public_key = "fake"
+        assert client._ensure_session() is True
+
+    def test_ensure_session_no_socket(self):
+        config = BrowserConfig()
+        client = BrowserClient(config)
+        # connect will fail (no real socket)
+        import keepassxc_browser_api.client as bc
+        original = bc._get_keepassxc_socket_path
+        bc._get_keepassxc_socket_path = lambda: "/tmp/nonexistent-keepassxc-test.sock"
+        try:
+            assert client._ensure_session() is False
+        finally:
+            bc._get_keepassxc_socket_path = original

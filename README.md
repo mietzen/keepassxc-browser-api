@@ -33,19 +33,21 @@ if not config.associations:
 # Ensure DB is unlocked (triggers TouchID/biometrics if locked)
 client.ensure_unlocked()
 
-# Search entries
+# API methods auto-connect when needed
 entries = client.get_logins("https://example.com")
 for e in entries:
     print(e.name, e.login)
 
-# Get all entries
-all_entries = client.get_database_entries()
+# Clean up when done
+client.disconnect()
+```
 
-# Get TOTP
-totp = client.get_totp(entries[0].uuid)
+Or use the context manager for automatic cleanup:
 
-# Lock the database
-client.lock_database()
+```python
+with BrowserClient(config) as client:
+    entries = client.get_logins("https://example.com")
+    totp = client.get_totp(entries[0].uuid)
 ```
 
 ## API
@@ -64,7 +66,7 @@ client.lock_database()
 | `get_totp(uuid)` | Get TOTP code for an entry |
 | `delete_entry(uuid)` | Delete an entry |
 | `lock_database()` | Lock the database |
-| `generate_password(...)` | Generate a password |
+| `generate_password()` | Generate a password (uses KeePassXC settings) |
 | `request_autotype(search)` | Trigger KeePassXC global auto-type |
 
 > **Note**: `passkeys-get` and `passkeys-register` are not implemented. They require complex WebAuthn/CBOR data structures and are only available in KeePassXC builds compiled with `WITH_XC_BROWSER_PASSKEYS`.

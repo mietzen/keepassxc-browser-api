@@ -73,9 +73,17 @@ class BrowserConfig:
         path = path or DEFAULT_CONFIG_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(str(path.parent), stat.S_IRWXU)
-        with open(path, "w") as f:
-            json.dump(self.to_dict(), f, indent=2)
-        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+        # Write to a temp file with 0600 permissions, then atomically rename
+        # to avoid a race window where secrets are world-readable.
+        tmp_path = path.with_suffix(".tmp")
+        fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.to_dict(), f, indent=2)
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
+        os.replace(tmp_path, path)
 
     @classmethod
     def load(cls, path: Path | None = None) -> BrowserConfig:

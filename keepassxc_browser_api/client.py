@@ -82,8 +82,12 @@ class BrowserClient:
         # Ensure DB is unlocked (triggers TouchID/biometrics if locked)
         client.ensure_unlocked()
 
-        # Use the API
+        # Use the API (auto-connects if needed)
         entries = client.get_logins("https://example.com")
+
+        # Or use as a context manager
+        with BrowserClient(config) as client:
+            entries = client.get_logins("https://example.com")
     """
 
     def __init__(self, config: BrowserConfig):
@@ -100,6 +104,12 @@ class BrowserClient:
             self._public_key = self._secret_key.public_key
             config.client_public_key = _b64encode(bytes(self._public_key))
             config.client_secret_key = _b64encode(bytes(self._secret_key))
+
+    def __enter__(self) -> BrowserClient:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.disconnect()
 
     # ------------------------------------------------------------------
     # Connection management
@@ -131,6 +141,22 @@ class BrowserClient:
                 pass
             self._socket = None
             self._server_public_key = None
+
+    def _ensure_session(self) -> bool:
+        """Ensure there is an active connection with completed key exchange.
+
+        Automatically connects and exchanges public keys if needed.
+        Returns True if the session is ready, False on failure.
+        """
+        if self._socket and self._server_public_key:
+            return True
+        if not self._socket:
+            if not self.connect():
+                return False
+        if not self._server_public_key:
+            if not self.change_public_keys():
+                return False
+        return True
 
     # ------------------------------------------------------------------
     # Low-level messaging
@@ -187,8 +213,11 @@ class BrowserClient:
     def _send_encrypted(self, action: str, inner: dict, *, timeout: float | None = None) -> dict | None:
         """Send an encrypted action message and return the decrypted response.
 
+        Automatically connects and performs key exchange if needed.
         Returns the decrypted inner dict, or None on failure.
         """
+        if not self._ensure_session():
+            return None
         nonce = nacl.utils.random(nacl.public.Box.NONCE_SIZE)
         encrypted = self._encrypt(inner, nonce)
         msg = {
@@ -666,25 +695,21 @@ class BrowserClient:
         decrypted = self._send_encrypted("request-autotype", inner)
         return decrypted is not None
 
-    def generate_password(
-        self,
-        *,
-        length: int = 20,
-        numbers: bool = True,
-        lowercase: bool = True,
-        uppercase: bool = True,
-        symbols: bool = False,
-        special: bool = False,
-    ) -> str | None:
+    def generate_password(self) -> str | None:
         """Ask KeePassXC to generate a password.
 
-        KeePassXC uses its own configured generator settings; the parameters
-        here are sent as hints but KeePassXC may apply its own profile.
+        KeePassXC uses its own configured generator settings; there are no
+        client-side parameters — the password profile is configured in the
+        KeePassXC application settings.
+
+        Note: Unlike other actions, the request is sent unencrypted but the
+        response is encrypted using the session keys.
 
         Returns:
             Generated password string, or None on failure.
         """
-        # generate-password is sent without encryption (no keys needed)
+        if not self._ensure_session():
+            return None
         nonce = nacl.utils.random(nacl.public.Box.NONCE_SIZE)
         msg = {
             "action": "generate-password",

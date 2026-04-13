@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import socket
+import sys
 import tempfile
 import time
 
@@ -25,6 +26,22 @@ from .models import Entry, Group
 logger = logging.getLogger(__name__)
 
 CLIENT_ID = "keepassxc-browser-api"
+
+
+def _get_keepassxc_config_path() -> str:
+    """Return the platform-specific KeePassXC ini file path.
+
+    Can be overridden via the KPXC_CONFIG environment variable (same as KeePassXC itself).
+    """
+    env_override = os.environ.get("KPXC_CONFIG", "")
+    if env_override:
+        return env_override
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/KeePassXC/keepassxc.ini")
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME", "")
+    if not xdg_config_home or not xdg_config_home.startswith("/"):
+        xdg_config_home = os.path.expanduser("~/.config")
+    return os.path.join(xdg_config_home, "keepassxc", "keepassxc.ini")
 
 
 def _get_keepassxc_socket_path() -> str:
@@ -607,10 +624,14 @@ class BrowserClient:
         }
         decrypted = self._send_encrypted("get-database-entries", inner)
         if decrypted is None:
+            config_path = _get_keepassxc_config_path()
             raise KeePassXCError(
-                "get-database-entries failed. "
-                "Make sure 'Allow access to all entries' is enabled in "
-                "KeePassXC → Settings → Browser Integration."
+                "get-database-entries failed (error 12 / 19). "
+                "This feature requires 'Allow access to all entries' to be enabled. "
+                f"Add the following to [{config_path}]:\n"
+                "  [Browser]\n"
+                "  AllowGetDatabaseEntriesRequest=true\n"
+                "Note: this setting may only take effect in KeePassXC builds that support it."
             )
 
         return [Entry.from_dict(e) for e in decrypted.get("entries", [])]

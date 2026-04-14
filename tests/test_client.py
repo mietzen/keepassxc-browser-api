@@ -236,46 +236,6 @@ class TestChangePublicKeys:
 
 
 # ---------------------------------------------------------------------------
-# request_autotype tests
-# ---------------------------------------------------------------------------
-
-
-class TestRequestAutotype:
-    def test_request_autotype_calls_send_encrypted(self):
-        from unittest.mock import MagicMock, patch
-
-        config = BrowserConfig()
-        client = BrowserClient(config)
-
-        with patch.object(client, "_send_encrypted", return_value={"action": "request-autotype"}) as mock_send:
-            result = client.request_autotype()
-            assert result is True
-            mock_send.assert_called_once_with("request-autotype", {"action": "request-autotype"})
-
-    def test_request_autotype_with_search(self):
-        from unittest.mock import patch
-
-        config = BrowserConfig()
-        client = BrowserClient(config)
-
-        with patch.object(client, "_send_encrypted", return_value={"action": "request-autotype"}) as mock_send:
-            result = client.request_autotype(search="github.com")
-            assert result is True
-            _, call_inner = mock_send.call_args[0]
-            assert call_inner["search"] == "github.com"
-
-    def test_request_autotype_returns_false_on_failure(self):
-        from unittest.mock import patch
-
-        config = BrowserConfig()
-        client = BrowserClient(config)
-
-        with patch.object(client, "_send_encrypted", return_value=None):
-            result = client.request_autotype()
-            assert result is False
-
-
-# ---------------------------------------------------------------------------
 # Model tests
 # ---------------------------------------------------------------------------
 

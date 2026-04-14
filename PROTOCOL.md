@@ -48,7 +48,7 @@ Every message **must** include a top-level `"clientID"` string field.
 
 ## Encryption
 
-All actions except `change-public-keys` and `generate-password` use **NaCl `crypto_box_easy`** (Curve25519 + XSalsa20 + Poly1305).
+All actions except `change-public-keys` use **NaCl `crypto_box_easy`** (Curve25519 + XSalsa20 + Poly1305).
 
 **Key exchange summary**:
 1. Client generates an ephemeral Curve25519 keypair (`client_pk`, `client_sk`).
@@ -384,10 +384,13 @@ On invalid UUID: `errorCode: 18`. On cancellation: `errorCode: 6`.
 
 ### `get-database-entries`
 
-Returns **all** entries in the database. Requires association and a specific user permission: Settings → Browser Integration → "Allow limited access to all entries in connected databases (ignores site access restrictions)".
+> ⚠️ **Not available in released KeePassXC builds.** This action exists only in the `develop` branch and has not shipped in any tagged release as of KeePassXC 2.7.12. Sending it to a released build returns error 12 (`INCORRECT_ACTION`). This library does not expose this method.
+
+For reference, the protocol shape when it does ship:
+
+Returns **all** entries in the database. Requires association and the user permission: Settings → Browser Integration → "Allow limited access to all entries in connected databases".
 
 > Source: [`BrowserAction.cpp#L392`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L392) · [`BrowserSettings.h`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserSettings.h) (`allowGetDatabaseEntriesRequest()`)
-> Note: This action has no constant defined — it is matched as a raw string `"get-database-entries"` in the dispatch chain. Added in KeePassXC 2.7.5 (commit `8a554b37`, 2023-02-25).
 
 **Inner request**:
 ```json
@@ -411,37 +414,11 @@ On permission denied: `errorCode: 19`. On no entries: `errorCode: 16`.
 
 ### `get-database-groups`
 
+> ℹ️ **Not implemented in this library.** The action works in released KeePassXC builds but is not currently exposed by this client. For the wire format, see the source reference below.
+
 Returns the full group tree of the database. Requires association.
 
 > Source: [`BrowserAction.cpp#L367`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L367)
-
-**Inner request**:
-```json
-{
-  "action": "get-database-groups",
-  "keys":   [ { "id": "My App Name", "key": "<base64 idKey>" } ]
-}
-```
-
-**Inner response** (note the double-nesting):
-```json
-{
-  "action": "get-database-groups",
-  "groups": {
-    "groups": [
-      {
-        "uuid":     "xxxxxxxx-...",
-        "name":     "Root",
-        "children": [
-          { "uuid": "...", "name": "Email", "children": [] }
-        ]
-      }
-    ]
-  }
-}
-```
-
-On no groups: `errorCode: 16`.
 
 ---
 
@@ -542,64 +519,17 @@ Client implementations should parse only the first JSON object. Checking for the
 
 ### `generate-password`
 
-Asks KeePassXC to generate a password using its configured generator. **This action requires GUI interaction** — KeePassXC opens a password generator popup window. The initial response is empty (`{}`); the actual password is sent as a **second message** on the socket only after the user clicks "Apply" in the popup. This makes the action unsuitable for headless or non-interactive use.
-
-**Does not require association** (no `m_associated` check in handler), but does require a prior key exchange (`change-public-keys`) because the response is encrypted.
+> ℹ️ **Not implemented in this library.** This action requires GUI interaction (KeePassXC opens a password generator popup and sends the result only after user confirmation), making it unsuitable for headless use.
 
 > Source: [`BrowserAction.cpp#L265`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L265)
-
-**Request** (outer, plaintext):
-```json
-{
-  "action":   "generate-password",
-  "nonce":    "<base64 random nonce>",
-  "clientID": "my-app"
-}
-```
-
-**Response** (outer, with encrypted `message`):
-```json
-{
-  "action":  "generate-password",
-  "nonce":   "<base64 incremented nonce>",
-  "message": "<base64 encrypted inner>"
-}
-```
-
-**Inner response** (decrypted):
-```json
-{
-  "action":  "generate-password",
-  "entries": [ { "login": "", "password": "Xk9#mQ2..." } ]
-}
-```
-
-KeePassXC applies its own configured password profile; any parameters sent by the client are currently ignored.
 
 ---
 
 ### `request-autotype`
 
-Triggers KeePassXC's global auto-type for the currently focused window. KeePassXC will show a picker if multiple entries match, or type immediately if only one matches. **Does not require association** (no `m_associated` check).
-
-The `search` string is limited to **256 characters** (`BrowserAction::MaxUrlLength`).
+> ℹ️ **Not implemented in this library.** Triggers KeePassXC's global auto-type for the currently focused window — a GUI-only feature not relevant for terminal use.
 
 > Source: [`BrowserAction.cpp#L500`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L500)
-
-**Inner request**:
-```json
-{
-  "action": "request-autotype",
-  "search": "github.com"
-}
-```
-
-**Inner response** (empty success):
-```json
-{
-  "action": "request-autotype"
-}
-```
 
 ---
 

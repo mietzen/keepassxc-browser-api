@@ -19,7 +19,7 @@ import nacl.public
 import nacl.utils
 
 from .config import Association, BrowserConfig
-from .exceptions import AssociationError, KeePassXCError, NotAssociatedError, ProtocolError
+from .exceptions import AssociationError, NotAssociatedError, ProtocolError
 from .models import Entry, Group
 
 logger = logging.getLogger(__name__)
@@ -595,44 +595,6 @@ class BrowserClient:
 
         return [Entry.from_dict(e) for e in decrypted.get("entries", [])]
 
-    def get_database_entries(self) -> list[Entry]:
-        """Return all entries in the database.
-
-        Returns:
-            List of all entries.
-        """
-        inner = {
-            "action": "get-database-entries",
-            "keys": self._get_connection_keys(),
-        }
-        decrypted = self._send_encrypted("get-database-entries", inner)
-        if decrypted is None:
-            raise KeePassXCError(
-                "get-database-entries failed. "
-                "Make sure 'Allow access to all entries' is enabled in "
-                "KeePassXC → Settings → Browser Integration."
-            )
-
-        return [Entry.from_dict(e) for e in decrypted.get("entries", [])]
-
-    def get_database_groups(self) -> list[Group]:
-        """Return all groups in the database as a tree.
-
-        Returns:
-            List of root groups; each group has a ``children`` attribute.
-        """
-        inner = {"action": "get-database-groups"}
-        decrypted = self._send_encrypted("get-database-groups", inner)
-        if not decrypted:
-            return []
-
-        groups_data = decrypted.get("groups", {})
-        # KeePassXC returns {"groups": {"groups": [...]}}
-        if isinstance(groups_data, dict):
-            groups_data = groups_data.get("groups", [])
-
-        return [Group.from_dict(g) for g in groups_data]
-
     def get_totp(self, uuid: str) -> str | None:
         """Return the current TOTP code for an entry.
 
@@ -774,64 +736,4 @@ class BrowserClient:
         response = self._send_json(msg)
         return response is not None and "errorCode" not in response
 
-    def request_autotype(self, search: str = "") -> bool:
-        """Trigger KeePassXC's global auto-type for the active window.
 
-        KeePassXC will show an entry picker if multiple matches are found,
-        or auto-fill immediately when there is exactly one match.
-
-        Does not require an existing association.
-
-        Args:
-            search: Optional search string (e.g. domain) to pre-filter entries.
-                    KeePassXC ignores strings longer than 256 characters.
-
-        Returns:
-            True if KeePassXC accepted the request.
-        """
-        inner: dict = {"action": "request-autotype"}
-        if search:
-            inner["search"] = search
-        decrypted = self._send_encrypted("request-autotype", inner)
-        return decrypted is not None
-
-    def generate_password(self) -> str | None:
-        """Ask KeePassXC to generate a password.
-
-        KeePassXC uses its own configured generator settings; there are no
-        client-side parameters — the password profile is configured in the
-        KeePassXC application settings.
-
-        Note: Unlike other actions, the request is sent unencrypted but the
-        response is encrypted using the session keys.  No association is
-        required — only ``change-public-keys`` must have been exchanged so
-        KeePassXC can encrypt the response.
-
-        Returns:
-            Generated password string, or None on failure.
-        """
-        if not self._ensure_keys():
-            return None
-        nonce = nacl.utils.random(nacl.public.Box.NONCE_SIZE)
-        msg = {
-            "action": "generate-password",
-            "nonce": _b64encode(nonce),
-        }
-        response = self._send_json(msg)
-        if not response or "errorCode" in response:
-            return None
-
-        resp_nonce_b64 = response.get("nonce", "")
-        resp_message = response.get("message", "")
-        if not resp_message or not resp_nonce_b64:
-            return None
-
-        resp_nonce = _b64decode(resp_nonce_b64)
-        decrypted = self._decrypt(resp_message, resp_nonce)
-        if not decrypted:
-            return None
-
-        entries = decrypted.get("entries", [])
-        if entries and isinstance(entries, list):
-            return entries[0].get("password") or None
-        return decrypted.get("password") or None

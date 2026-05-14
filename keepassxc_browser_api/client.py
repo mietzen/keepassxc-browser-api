@@ -623,7 +623,6 @@ class BrowserClient:
         username: str,
         password: str,
         *,
-        title: str = "",
         submit_url: str = "",
         uuid: str = "",
         group: str = "",
@@ -634,15 +633,20 @@ class BrowserClient:
 
         Pass ``uuid`` to update an existing entry; omit to create a new one.
 
+        The entry title is always derived from the URL hostname by KeePassXC;
+        it cannot be set via the protocol.
+
         Args:
             url: The URL to associate with this entry.
             username: The username/login field.
             password: The password field.
-            title: Optional entry title (defaults to the URL hostname in KeePassXC).
             submit_url: Optional form submit URL.
             uuid: Existing entry UUID for updates.
             group: Target group name for new entries.
-            group_uuid: Target group UUID for new entries.
+            group_uuid: Target group UUID for new entries. KeePassXC only
+                performs the UUID lookup when ``group`` is also non-empty;
+                if only ``group_uuid`` is supplied this method sets both
+                fields automatically.
             download_favicon: Ask KeePassXC to download the site's favicon.
 
         Returns:
@@ -655,38 +659,45 @@ class BrowserClient:
             "password": password,
             "keys": self._get_connection_keys(),
         }
-        if title:
-            inner["id"] = title
         if submit_url:
             inner["submitUrl"] = submit_url
         if uuid:
             inner["uuid"] = uuid
-        if group:
-            inner["group"] = group
-        if group_uuid:
+        if group_uuid and not group:
+            # KeePassXC only enters UUID-based group lookup when "group" is
+            # non-empty (BrowserService::addEntry). Supply group_uuid as the
+            # trigger value so the UUID lookup is actually performed.
+            inner["group"] = group_uuid
             inner["groupUuid"] = group_uuid
+        else:
+            if group:
+                inner["group"] = group
+            if group_uuid:
+                inner["groupUuid"] = group_uuid
         if download_favicon:
             inner["downloadFavicon"] = "true"
 
         decrypted = self._send_encrypted("set-login", inner)
         return decrypted is not None
 
-    def create_group(self, name: str, parent_group_uuid: str = "") -> Group | None:
+    def create_group(self, name: str) -> Group | None:
         """Create a new group in the database.
 
+        KeePassXC creates groups by path: use ``/`` to create nested groups,
+        e.g. ``"Work/Projects"`` creates *Projects* inside *Work*.
+        If all path segments already exist, KeePassXC returns the existing
+        leaf group without creating duplicates.
+
         Args:
-            name: Group name.
-            parent_group_uuid: UUID of the parent group. If empty, creates at root.
+            name: Group name or ``/``-separated path (e.g. ``"Parent/Child``).
 
         Returns:
-            The newly created Group, or None on failure.
+            The newly created (or already-existing) Group, or None on failure.
         """
         inner: dict = {
             "action": "create-new-group",
             "groupName": name,
         }
-        if parent_group_uuid:
-            inner["groupUuid"] = parent_group_uuid
 
         decrypted = self._send_encrypted("create-new-group", inner)
         if not decrypted:

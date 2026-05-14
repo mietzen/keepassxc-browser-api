@@ -417,11 +417,48 @@ On permission denied: `errorCode: 19`. On no entries: `errorCode: 16`.
 
 ### `get-database-groups`
 
-> ℹ️ **Not implemented in this library.** The action works in released KeePassXC builds but is not currently exposed by this client. For the wire format, see the source reference below.
+Returns the full group tree of the database. Requires association. The recycle bin group is excluded automatically by KeePassXC.
 
-Returns the full group tree of the database. Requires association.
+> Source: [`BrowserAction.cpp#L367`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L367), [`BrowserService.cpp#L204`](https://github.com/keepassxreboot/keepassxc/blob/2.7.9/src/browser/BrowserService.cpp#L204)
 
-> Source: [`BrowserAction.cpp#L367`](https://github.com/keepassxreboot/keepassxc/blob/develop/src/browser/BrowserAction.cpp#L367)
+**Inner request**:
+```json
+{
+  "action": "get-database-groups"
+}
+```
+
+**Inner response**:
+```json
+{
+  "action": "get-database-groups",
+  "groups": {
+    "groups": [
+      {
+        "name":     "Root",
+        "uuid":     "<root group uuid>",
+        "children": [
+          {
+            "name":     "Work",
+            "uuid":     "<work group uuid>",
+            "children": [
+              {
+                "name":     "Projects",
+                "uuid":     "<projects group uuid>",
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+- The response nests the result under `groups.groups` because `BrowserAction` wraps the `getDatabaseGroups()` return value (itself `{"groups": [...]}`) as a params entry with key `"groups"`.
+- The outer array always contains exactly one element: the root group.
+- Each group node has `name`, `uuid`, and `children` (recursive list of the same shape).
 
 ---
 

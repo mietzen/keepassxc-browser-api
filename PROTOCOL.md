@@ -364,8 +364,11 @@ Creates a new entry or updates an existing one. Requires association. If `uuid` 
 }
 ```
 
+- `id`: The association name (from `associate`). This is **not** the entry title — KeePassXC always derives the entry title from the URL hostname (`QUrl(url).host()`). There is no protocol field to set a custom entry title.
 - `uuid`: If non-empty, updates the entry with that UUID. If empty, creates a new entry.
-- `groupUuid`: Optional target group for new entries.
+- `group` + `groupUuid`: Both must be non-empty to place a new entry in a specific group. KeePassXC only performs the UUID lookup (`findGroupByUuid(groupUuid)`) when `group` is non-empty — `groupUuid` alone is silently ignored.
+
+> Source: [`BrowserService.cpp#L808-L818`](https://github.com/keepassxreboot/keepassxc/blob/2.7.9/src/browser/BrowserService.cpp#L808)
 
 **Inner response**:
 ```json
@@ -431,20 +434,26 @@ Creates a new group. Requires association.
 **Inner request**:
 ```json
 {
-  "action":          "create-new-group",
-  "groupName":       "New Group",
-  "parentGroupUuid": "<uuid of parent group or empty for root>"
+  "action":    "create-new-group",
+  "groupName": "Work/Projects"
 }
 ```
+
+- `groupName`: Group name or `/`-separated path. KeePassXC splits on `"/"` and creates each missing path segment under the root (e.g. `"Work/Projects"` creates *Projects* inside *Work*). If all segments already exist, returns the existing leaf group.
+- There is **no** parent UUID field. KeePassXC 2.7.9 reads only `groupName` from this request — any additional fields are ignored.
+
+> Source: [`BrowserAction.cpp#L434`](https://github.com/keepassxreboot/keepassxc/blob/2.7.9/src/browser/BrowserAction.cpp#L434), [`BrowserService.cpp#L264`](https://github.com/keepassxreboot/keepassxc/blob/2.7.9/src/browser/BrowserService.cpp#L264)
 
 **Inner response**:
 ```json
 {
-  "action":    "create-new-group",
-  "name":      "New Group",
-  "uuid":      "<new group uuid>"
+  "action": "create-new-group",
+  "name":   "Projects",
+  "uuid":   "<new group uuid>"
 }
 ```
+
+- `name` is the leaf group name only (not the full path).
 
 ---
 

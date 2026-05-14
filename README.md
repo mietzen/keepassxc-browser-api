@@ -60,7 +60,7 @@ with BrowserClient(config) as client:
 | `set_login(url, username, password, ...)` | Create or update an entry |
 | `get_database_entries()` | Return all entries |
 | `get_database_groups()` | Return all groups (tree) |
-| `create_group(name, parent_uuid)` | Create a new group |
+| `create_group(name)` | Create a new group (use `"Parent/Child"` path syntax for nesting) |
 | `get_totp(uuid)` | Get TOTP code for an entry |
 | `delete_entry(uuid)` | Delete an entry |
 | `lock_database()` | Lock the database |

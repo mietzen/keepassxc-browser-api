@@ -708,6 +708,31 @@ class BrowserClient:
             name=decrypted.get("name", name),
         )
 
+    def get_database_groups(self) -> list[Group]:
+        """Return the full group tree of the database.
+
+        KeePassXC returns a recursive tree rooted at the database root group.
+        The recycle bin is excluded by KeePassXC automatically.
+
+        Returns:
+            List containing the root Group (with children populated
+            recursively), or an empty list on failure.
+        """
+        inner: dict = {"action": "get-database-groups"}
+        decrypted = self._send_encrypted("get-database-groups", inner)
+        if not decrypted:
+            return []
+
+        # BrowserAction builds: params = {"groups": getDatabaseGroups()}
+        # getDatabaseGroups() returns {"groups": [root_group_dict]}
+        # After params merge into the inner message: decrypted["groups"] = {"groups": [...]}
+        raw = decrypted.get("groups", {})
+        if isinstance(raw, dict):
+            group_list = raw.get("groups", [])
+        else:
+            group_list = raw
+        return [Group.from_dict(g) for g in group_list]
+
     def delete_entry(self, uuid: str) -> bool:
         """Delete an entry by UUID.
 

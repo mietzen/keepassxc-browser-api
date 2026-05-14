@@ -350,3 +350,94 @@ class TestContextManager:
             assert client._ensure_session() is False
         finally:
             bc._get_keepassxc_socket_path = original
+
+
+# ---------------------------------------------------------------------------
+# get_database_groups
+# ---------------------------------------------------------------------------
+
+
+class TestGetDatabaseGroups:
+    """Tests for BrowserClient.get_database_groups()."""
+
+    _TREE = {
+        "groups": {
+            "groups": [
+                {
+                    "name": "Root",
+                    "uuid": "root-uuid",
+                    "children": [
+                        {
+                            "name": "Work",
+                            "uuid": "work-uuid",
+                            "children": [
+                                {
+                                    "name": "Projects",
+                                    "uuid": "projects-uuid",
+                                    "children": [],
+                                }
+                            ],
+                        },
+                        {
+                            "name": "Personal",
+                            "uuid": "personal-uuid",
+                            "children": [],
+                        },
+                    ],
+                }
+            ]
+        }
+    }
+
+    def _make_client(self) -> BrowserClient:
+        config = BrowserConfig()
+        client = BrowserClient(config)
+        client._associated = True
+        client._server_public_key = "fake-server-pk"
+        client._socket = type("MockSock", (), {"gettimeout": lambda self: None, "settimeout": lambda self, t: None})()
+        return client
+
+    def test_returns_root_group_tree(self):
+        from unittest.mock import patch
+        client = self._make_client()
+        with patch.object(client, "_send_encrypted", return_value=self._TREE):
+            groups = client.get_database_groups()
+        assert len(groups) == 1
+        root = groups[0]
+        assert root.name == "Root"
+        assert root.uuid == "root-uuid"
+        assert len(root.children) == 2
+
+    def test_nested_children(self):
+        from unittest.mock import patch
+        client = self._make_client()
+        with patch.object(client, "_send_encrypted", return_value=self._TREE):
+            groups = client.get_database_groups()
+        root = groups[0]
+        work = next(g for g in root.children if g.name == "Work")
+        assert len(work.children) == 1
+        assert work.children[0].name == "Projects"
+        assert work.children[0].uuid == "projects-uuid"
+
+    def test_flat_list_traversal(self):
+        from unittest.mock import patch
+        client = self._make_client()
+        with patch.object(client, "_send_encrypted", return_value=self._TREE):
+            groups = client.get_database_groups()
+        flat = groups[0].flat_list()
+        names = {g.name for g in flat}
+        assert names == {"Root", "Work", "Projects", "Personal"}
+
+    def test_returns_empty_on_failure(self):
+        from unittest.mock import patch
+        client = self._make_client()
+        with patch.object(client, "_send_encrypted", return_value=None):
+            groups = client.get_database_groups()
+        assert groups == []
+
+    def test_send_encrypted_called_with_correct_action(self):
+        from unittest.mock import patch
+        client = self._make_client()
+        with patch.object(client, "_send_encrypted", return_value=self._TREE) as mock_send:
+            client.get_database_groups()
+        mock_send.assert_called_once_with("get-database-groups", {"action": "get-database-groups"})

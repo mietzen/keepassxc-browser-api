@@ -11,7 +11,7 @@ Python library for communicating with [KeePassXC](https://keepassxc.org/) via th
 - Cross-platform: macOS and Linux
 - Shared config (`~/.keepassxc/browser-api.json`) — associate once, use with all tools
 
-## Installation
+## Install
 
 ```shell
 pip install keepassxc-browser-api
@@ -126,10 +126,10 @@ For a detailed description of the KeePassXC browser extension protocol (wire for
 pip install -e ".[dev]"
 
 # Run tests
-pytest
+pytest --tb=short -q
 
 # Run tests with coverage
-pytest --cov=keepassxc_browser_api
+pytest --cov=keepassxc_browser_api --cov-report=term-missing
 
 # Lint
 ruff check --ignore=E501 --exclude=__init__.py ./keepassxc_browser_api

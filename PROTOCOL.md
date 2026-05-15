@@ -605,16 +605,16 @@ Client                              KeePassXC
   |-- test-associate ------------------>|  (must come before any auth request)
   |<-- ERROR: database not opened ------|  (DB locked → trigger unlock)
   |                                     |
-  |-- get-databasehash (triggerUnlock) ->|  (show TouchID/biometrics dialog)
+  |- get-databasehash (triggerUnlock) ->|  (show TouchID/biometrics dialog)
   |<-- ERROR: database not opened ------|  (non-blocking; poll until unlocked)
   |    ... retry after short delay ...  |
-  |-- get-databasehash ----------------->|
+  |-- get-databasehash ---------------->|
   |<-- get-databasehash (hash: "abc") --|
   |                                     |
   |-- test-associate ------------------>|  (retry now that DB is open)
   |<-- test-associate (id: "My App") ---|  (m_associated set to true)
   |                                     |
-  |-- get-logins (url: "...") -------->|  (fetch credentials)
+  |-- get-logins (url: "...") --------->|  (fetch credentials)
   |<-- get-logins (entries: [...]) -----|
 ```
 

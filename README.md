@@ -11,6 +11,11 @@ Python library for communicating with [KeePassXC](https://keepassxc.org/) via th
 - Cross-platform: macOS and Linux
 - Shared config (`~/.keepassxc/browser-api.json`) — associate once, use with all tools
 
+## Projects using KeePassXC Browser API
+
+- [KeePassXC CLI](https://github.com/mietzen/keepassxc-cli)
+- [KeePassXC SSH Agent](https://github.com/mietzen/keepassxc-ssh-agent)
+
 ## Install
 
 ```shell

@@ -80,6 +80,41 @@ config.save()                        # Save to default path
 config.save(path)                    # Save to custom path
 ```
 
+## Error handling
+
+All API methods raise exceptions on failure — they never return `False` or `None` on error.
+
+| Exception | Cause |
+|---|---|
+| `ConnectionError` | KeePassXC is not running / socket not found |
+| `DatabaseLockedError` | Database unlock timeout exceeded |
+| `ProtocolError` | KeePassXC returned a protocol-level error response |
+| `KeePassXCError` | Base class — catch this to handle all library errors at once |
+
+`ProtocolError.error_code` contains the KeePassXC error enum value (see [PROTOCOL.md](PROTOCOL.md) for the full list). Common values: `6` = access denied by user, `19` = access to all entries denied.
+
+**Special case**: `get_logins()` catches `ProtocolError(code=15)` (no logins found) internally and returns `[]` instead of raising.
+
+```python
+from keepassxc_browser_api import BrowserClient, BrowserConfig
+from keepassxc_browser_api.exceptions import ConnectionError, DatabaseLockedError, ProtocolError
+
+config = BrowserConfig.load()
+client = BrowserClient(config)
+
+try:
+    entries = client.get_logins("https://example.com")
+except ConnectionError:
+    print("KeePassXC is not running", file=sys.stderr)
+    sys.exit(2)
+except DatabaseLockedError:
+    print("Database unlock timed out", file=sys.stderr)
+    sys.exit(3)
+except ProtocolError as e:
+    print(f"KeePassXC error {e.error_code}: {e}", file=sys.stderr)
+    sys.exit(1)
+```
+
 ## Protocol documentation
 
 For a detailed description of the KeePassXC browser extension protocol (wire format, encryption, all actions, error codes), see **[PROTOCOL.md](PROTOCOL.md)**.

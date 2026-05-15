@@ -19,7 +19,7 @@ import nacl.public
 import nacl.utils
 
 from .config import Association, BrowserConfig
-from .exceptions import AssociationError, NotAssociatedError, ProtocolError
+from .exceptions import AssociationError, ConnectionError, DatabaseLockedError, NotAssociatedError, ProtocolError
 from .models import Entry, Group
 
 logger = logging.getLogger(__name__)
@@ -116,10 +116,10 @@ class BrowserClient:
     # Connection management
     # ------------------------------------------------------------------
 
-    def connect(self) -> bool:
+    def connect(self) -> None:
         """Connect to KeePassXC browser extension socket.
 
-        Returns True on success, False if KeePassXC is not running.
+        Raises ConnectionError if KeePassXC is not running.
         """
         path = _get_keepassxc_socket_path()
         try:
@@ -127,11 +127,10 @@ class BrowserClient:
             self._socket.settimeout(5.0)
             self._socket.connect(path)
             logger.debug("Connected to KeePassXC at %s", path)
-            return True
         except OSError as e:
-            logger.error("Cannot connect to KeePassXC browser socket at %s: %s", path, e)
+            logger.debug("Cannot connect to KeePassXC browser socket at %s: %s", path, e)
             self._socket = None
-            return False
+            raise ConnectionError(f"Cannot connect to KeePassXC: {e}") from e
 
     def disconnect(self) -> None:
         """Close the connection and clear session state."""
@@ -143,47 +142,42 @@ class BrowserClient:
             self._socket = None
             self._server_public_key = None
             self._associated = False
+            logger.debug("Disconnected")
 
-    def _ensure_session(self) -> bool:
+    def _ensure_session(self) -> None:
         """Ensure there is an active connection with a verified association.
 
         Automatically connects, exchanges public keys, triggers biometric unlock
         if the database is locked, and verifies the association.
-        Returns True if the session is ready, False on failure.
+        Raises ConnectionError, DatabaseLockedError, or AssociationError on failure.
         """
         if self._socket and self._server_public_key and self._associated:
-            return True
+            return
         if not self._socket:
-            if not self.connect():
-                return False
+            self.connect()
         if not self._server_public_key:
-            if not self.change_public_keys():
-                return False
+            self.change_public_keys()
         if not self._associated:
             if not self._run_test_associate(warn_on_failure=False):
                 # DB may be locked — trigger biometric unlock and retry
                 logger.info("Association failed; triggering database unlock...")
-                if not self.trigger_unlock():
-                    return False
+                self.trigger_unlock()
                 # trigger_unlock reconnects and re-exchanges keys internally
                 if not self._run_test_associate():
-                    return False
-        return True
+                    raise AssociationError("All stored associations are invalid — re-run setup()")
 
-    def _ensure_keys(self) -> bool:
+    def _ensure_keys(self) -> None:
         """Ensure connection and key exchange only (no association check).
 
         Used internally by _test_associate_raw to avoid infinite recursion:
         test_associate must not call _ensure_session which calls _run_test_associate
         which calls test_associate again.
+        Raises ConnectionError on failure.
         """
         if not self._socket:
-            if not self.connect():
-                return False
+            self.connect()
         if not self._server_public_key:
-            if not self.change_public_keys():
-                return False
-        return True
+            self.change_public_keys()
 
     def _run_test_associate(self, *, warn_on_failure: bool = True) -> bool:
         """Run test-associate for all stored associations.
@@ -264,14 +258,15 @@ class BrowserClient:
             logger.error("Failed to decrypt message: %s", e)
             return None
 
-    def _send_encrypted(self, action: str, inner: dict, *, timeout: float | None = None) -> dict | None:
+    def _send_encrypted(self, action: str, inner: dict, *, timeout: float | None = None) -> dict:
         """Send an encrypted action message and return the decrypted response.
 
         Automatically connects and performs key exchange if needed.
-        Returns the decrypted inner dict, or None on failure.
+        Returns the decrypted inner dict on success.
+        Raises ConnectionError, ProtocolError, or other KeePassXCError on failure.
         """
-        if not self._ensure_session():
-            return None
+        self._ensure_session()
+        logger.debug("→ %s", action)
         nonce = nacl.utils.random(nacl.public.Box.NONCE_SIZE)
         encrypted = self._encrypt(inner, nonce)
         msg = {
@@ -290,29 +285,37 @@ class BrowserClient:
             self._socket.settimeout(old_timeout)
 
         if not response:
-            return None
+            raise ConnectionError(f"No response from KeePassXC for action '{action}'")
         if "errorCode" in response:
-            logger.warning("Error response for %s: %s (code %s)", action, response.get("error"), response.get("errorCode"))
-            return None
+            error_code = int(response["errorCode"])
+            error_msg = response.get("error", "unknown error")
+            logger.debug("Error response for %s: %s (code %s)", action, error_msg, error_code)
+            raise ProtocolError(
+                f"KeePassXC error for '{action}': {error_msg} (code {error_code})",
+                error_code=error_code,
+            )
 
         resp_nonce_b64 = response.get("nonce", "")
         resp_message = response.get("message", "")
         if not resp_nonce_b64 or not resp_message:
-            logger.error("Missing nonce or message in response for %s", action)
-            return None
+            raise ProtocolError(f"Missing nonce or message in response for '{action}'")
 
         resp_nonce = _b64decode(resp_nonce_b64)
-        return self._decrypt(resp_message, resp_nonce)
+        decrypted = self._decrypt(resp_message, resp_nonce)
+        if decrypted is None:
+            raise ProtocolError(f"Failed to decrypt response for '{action}'")
+        return decrypted
 
     # ------------------------------------------------------------------
     # Protocol: key exchange & association
     # ------------------------------------------------------------------
 
-    def change_public_keys(self) -> bool:
+    def change_public_keys(self) -> None:
         """Perform NaCl key exchange with KeePassXC.
 
         KeePassXC resets its m_associated flag on every key exchange, so
         test-associate must be called again afterwards.
+        Raises ConnectionError on failure.
         """
         nonce = nacl.utils.random(nacl.public.Box.NONCE_SIZE)
         msg = {
@@ -323,22 +326,21 @@ class BrowserClient:
 
         response = self._send_json(msg)
         if not response:
-            logger.error("No response to change-public-keys")
-            return False
+            logger.debug("No response to change-public-keys")
+            raise ConnectionError("Key exchange failed: no response from KeePassXC")
 
         if "errorCode" in response:
-            logger.error("Key exchange failed: %s", response.get("error"))
-            return False
+            logger.debug("Key exchange failed: %s", response.get("error"))
+            raise ConnectionError(f"Key exchange failed: {response.get('error')}")
 
         server_pk_b64 = response.get("publicKey")
         if not server_pk_b64:
-            logger.error("No server public key in response")
-            return False
+            logger.debug("No server public key in response")
+            raise ConnectionError("Key exchange failed: no server public key in response")
 
         self._server_public_key = nacl.public.PublicKey(_b64decode(server_pk_b64))
         self._associated = False  # KeePassXC resets m_associated on key exchange
         logger.debug("Key exchange successful")
-        return True
 
     def associate(self) -> Association | None:
         """Associate with KeePassXC (one-time, requires user approval in KeePassXC).
@@ -407,8 +409,7 @@ class BrowserClient:
         recursion: calling test_associate → _send_encrypted → _ensure_session →
         _run_test_associate → test_associate.
         """
-        if not self._ensure_keys():
-            return False
+        self._ensure_keys()
         inner = {
             "action": "test-associate",
             "id": association.id,
@@ -459,29 +460,29 @@ class BrowserClient:
             msg["triggerUnlock"] = "true"
         return self._send_json(msg)
 
-    def trigger_unlock(self) -> bool:
+    def trigger_unlock(self) -> None:
         """Trigger KeePassXC database unlock (biometrics/TouchID).
 
         Sends get-databasehash with triggerUnlock=true (non-blocking), then
         polls until the DB is unlocked or the timeout expires.
-
-        Returns True if the database is now unlocked.
+        Raises ConnectionError if KeePassXC is unreachable, DatabaseLockedError
+        if the timeout expires before the database is unlocked.
         """
         logger.debug("Sending get-databasehash with triggerUnlock=true")
         response = self._send_get_databasehash(trigger_unlock=True)
 
         if not response:
-            logger.error("No response to unlock trigger")
-            return False
+            raise ConnectionError("No response to unlock trigger")
 
         if "errorCode" not in response:
             logger.info("Database was already unlocked")
-            return True
+            return
 
         error_code = response.get("errorCode")
         if error_code != "1":
-            logger.error("Unlock failed: %s (code %s)", response.get("error"), error_code)
-            return False
+            raise DatabaseLockedError(
+                f"Unlock failed: {response.get('error')} (code {error_code})"
+            )
 
         logger.info("Unlock dialog triggered, waiting for user to authenticate...")
         deadline = time.monotonic() + self.config.unlock_timeout
@@ -491,9 +492,10 @@ class BrowserClient:
             time.sleep(poll_interval)
 
             self.disconnect()
-            if not self.connect():
-                continue
-            if not self.change_public_keys():
+            try:
+                self.connect()
+                self.change_public_keys()
+            except ConnectionError:
                 continue
 
             response = self._send_get_databasehash(trigger_unlock=False)
@@ -502,58 +504,46 @@ class BrowserClient:
 
             if "errorCode" not in response:
                 logger.info("Database unlocked successfully")
-                return True
+                return
 
             logger.debug("Still locked, polling...")
 
-        logger.warning("Timeout waiting for database unlock")
-        return False
+        raise DatabaseLockedError(
+            f"Timeout waiting for database unlock after {self.config.unlock_timeout}s"
+        )
 
-    def ensure_unlocked(self) -> bool:
+    def ensure_unlocked(self) -> None:
         """Connect and ensure the database is unlocked.
 
         Handles the full flow: connect → key exchange → trigger unlock.
-        Returns True if the database is now unlocked.
-
-        Raises NotAssociatedError if no associations are configured.
+        Raises NotAssociatedError if no associations are configured,
+        ConnectionError if KeePassXC is unreachable, or DatabaseLockedError
+        if the timeout expires.
         """
         if not self.config.associations:
             raise NotAssociatedError("No associations configured. Run setup() first.")
 
-        if not self.connect():
-            return False
-
+        self.connect()
         try:
-            if not self.change_public_keys():
-                return False
-            return self.trigger_unlock()
+            self.change_public_keys()
+            self.trigger_unlock()
         finally:
             self.disconnect()
 
-    def setup(self) -> bool:
+    def setup(self) -> None:
         """Perform initial setup: connect, key exchange, and associate.
 
         The user must approve the association in the KeePassXC window.
-        Returns True on success.
-
-        Raises AssociationError if the user denies or an error occurs.
+        Raises ConnectionError if KeePassXC is unreachable, or AssociationError
+        if the user denies or an error occurs.
         """
-        if not self.connect():
-            return False
+        self.connect()
 
         try:
-            if not self.change_public_keys():
-                return False
-
-            print("Requesting association with KeePassXC...")
-            print("Please approve the association in the KeePassXC window.")
-
-            association = self.associate()
-            if not association:
-                return False
-
-            print(f"Association successful! ID: {association.id}")
-            return True
+            self.change_public_keys()
+            logger.info("Requesting association with KeePassXC...")
+            logger.info("Please approve the association in the KeePassXC window.")
+            self.associate()
         finally:
             self.disconnect()
 
@@ -589,9 +579,13 @@ class BrowserClient:
         if http_auth:
             inner["httpAuth"] = "true"
 
-        decrypted = self._send_encrypted("get-logins", inner)
-        if not decrypted:
-            return []
+        try:
+            decrypted = self._send_encrypted("get-logins", inner)
+        except ProtocolError as e:
+            if e.error_code == 15:
+                logger.debug("get-logins: no entries found (code 15)")
+                return []
+            raise
 
         return [Entry.from_dict(e) for e in decrypted.get("entries", [])]
 
@@ -609,8 +603,6 @@ class BrowserClient:
             "uuid": uuid,
         }
         decrypted = self._send_encrypted("get-totp", inner)
-        if not decrypted:
-            return None
         return decrypted.get("totp") or None
 
     # ------------------------------------------------------------------
@@ -677,8 +669,8 @@ class BrowserClient:
         if download_favicon:
             inner["downloadFavicon"] = "true"
 
-        decrypted = self._send_encrypted("set-login", inner)
-        return decrypted is not None
+        self._send_encrypted("set-login", inner)
+        return True
 
     def create_group(self, name: str) -> Group | None:
         """Create a new group in the database.
@@ -700,9 +692,6 @@ class BrowserClient:
         }
 
         decrypted = self._send_encrypted("create-new-group", inner)
-        if not decrypted:
-            return None
-
         return Group(
             uuid=decrypted.get("uuid", ""),
             name=decrypted.get("name", name),
@@ -720,9 +709,6 @@ class BrowserClient:
         """
         inner: dict = {"action": "get-database-groups"}
         decrypted = self._send_encrypted("get-database-groups", inner)
-        if not decrypted:
-            return []
-
         # BrowserAction builds: params = {"groups": getDatabaseGroups()}
         # getDatabaseGroups() returns {"groups": [root_group_dict]}
         # After params merge into the inner message: decrypted["groups"] = {"groups": [...]}
@@ -746,8 +732,8 @@ class BrowserClient:
             "action": "delete-entry",
             "uuid": uuid,
         }
-        decrypted = self._send_encrypted("delete-entry", inner)
-        return decrypted is not None
+        self._send_encrypted("delete-entry", inner)
+        return True
 
     def lock_database(self) -> bool:
         """Lock the KeePassXC database.
@@ -759,8 +745,7 @@ class BrowserClient:
         Returns:
             True if the lock command was accepted.
         """
-        if not self._ensure_session():
-            return False
+        self._ensure_session()
         inner = {"action": "lock-database"}
         nonce = nacl.utils.random(nacl.public.Box.NONCE_SIZE)
         encrypted = self._encrypt(inner, nonce)

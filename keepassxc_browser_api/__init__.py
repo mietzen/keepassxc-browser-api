@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from .client import BrowserClient
 from .config import Association, BrowserConfig
-from .exceptions import AssociationError, KeePassXCError, NotAssociatedError
+from .exceptions import AssociationError, ConnectionError, DatabaseLockedError, KeePassXCError, NotAssociatedError, ProtocolError
 from .models import Entry, Group
 
 __all__ = [
@@ -19,5 +19,8 @@ __all__ = [
     "Group",
     "KeePassXCError",
     "AssociationError",
+    "ConnectionError",
+    "DatabaseLockedError",
     "NotAssociatedError",
+    "ProtocolError",
 ]

@@ -14,4 +14,7 @@ class TestPublicAPI:
         assert hasattr(keepassxc_browser_api, "Group")
         assert hasattr(keepassxc_browser_api, "KeePassXCError")
         assert hasattr(keepassxc_browser_api, "AssociationError")
+        assert hasattr(keepassxc_browser_api, "ConnectionError")
+        assert hasattr(keepassxc_browser_api, "DatabaseLockedError")
         assert hasattr(keepassxc_browser_api, "NotAssociatedError")
+        assert hasattr(keepassxc_browser_api, "ProtocolError")

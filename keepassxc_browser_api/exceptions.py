@@ -25,3 +25,7 @@ class DatabaseLockedError(KeePassXCError):
 
 class ProtocolError(KeePassXCError):
     """Unexpected response from KeePassXC (encryption, JSON, protocol errors)."""
+
+    def __init__(self, message: str = "", *, error_code: int | None = None):
+        super().__init__(message)
+        self.error_code = error_code

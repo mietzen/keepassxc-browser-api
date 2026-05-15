@@ -24,5 +24,18 @@ class TestExceptions:
         err = NotAssociatedError("Run setup() first.")
         assert "setup()" in str(err)
 
+    def test_protocol_error_default_error_code(self):
+        err = ProtocolError("bad response")
+        assert err.error_code is None
+
+    def test_protocol_error_with_error_code(self):
+        err = ProtocolError("access denied", error_code=6)
+        assert err.error_code == 6
+        assert "access denied" in str(err)
+
+    def test_protocol_error_inherits_from_keepassxc_error(self):
+        err = ProtocolError("test", error_code=15)
+        assert isinstance(err, KeePassXCError)
+
 
 import pytest

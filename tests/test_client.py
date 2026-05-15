@@ -19,7 +19,7 @@ from keepassxc_browser_api.client import (
     CLIENT_ID,
 )
 from keepassxc_browser_api.config import Association, BrowserConfig
-from keepassxc_browser_api.exceptions import AssociationError, NotAssociatedError
+from keepassxc_browser_api.exceptions import AssociationError, ConnectionError, NotAssociatedError, ProtocolError
 from keepassxc_browser_api.models import Entry, Group
 
 
@@ -103,7 +103,8 @@ class TestBrowserClientConnect:
         original = bc._get_keepassxc_socket_path
         bc._get_keepassxc_socket_path = lambda: "/tmp/nonexistent-keepassxc-test.sock"
         try:
-            assert client.connect() is False
+            with pytest.raises(ConnectionError):
+                client.connect()
         finally:
             bc._get_keepassxc_socket_path = original
 
@@ -205,8 +206,8 @@ class TestChangePublicKeys:
         original = bc._get_keepassxc_socket_path
         bc._get_keepassxc_socket_path = lambda: sock_path
         try:
-            assert client.connect() is True
-            assert client.change_public_keys() is True
+            client.connect()
+            client.change_public_keys()
             assert client._server_public_key is not None
         finally:
             bc._get_keepassxc_socket_path = original
@@ -226,8 +227,9 @@ class TestChangePublicKeys:
         original = bc._get_keepassxc_socket_path
         bc._get_keepassxc_socket_path = lambda: sock_path
         try:
-            assert client.connect() is True
-            assert client.change_public_keys() is False
+            client.connect()
+            with pytest.raises(ConnectionError):
+                client.change_public_keys()
         finally:
             bc._get_keepassxc_socket_path = original
             client.disconnect()
@@ -337,7 +339,7 @@ class TestContextManager:
         client._socket = mock_sock
         client._server_public_key = "fake"
         client._associated = True
-        assert client._ensure_session() is True
+        client._ensure_session()
 
     def test_ensure_session_no_socket(self):
         config = BrowserConfig()
@@ -347,7 +349,8 @@ class TestContextManager:
         original = bc._get_keepassxc_socket_path
         bc._get_keepassxc_socket_path = lambda: "/tmp/nonexistent-keepassxc-test.sock"
         try:
-            assert client._ensure_session() is False
+            with pytest.raises(ConnectionError):
+                client._ensure_session()
         finally:
             bc._get_keepassxc_socket_path = original
 
@@ -428,16 +431,16 @@ class TestGetDatabaseGroups:
         names = {g.name for g in flat}
         assert names == {"Root", "Work", "Projects", "Personal"}
 
-    def test_returns_empty_on_failure(self):
+    def test_raises_on_failure(self):
         from unittest.mock import patch
         client = self._make_client()
-        with patch.object(client, "_send_encrypted", return_value=None):
-            groups = client.get_database_groups()
-        assert groups == []
+        with patch.object(client, "_send_encrypted", side_effect=ProtocolError("test error", error_code=1)):
+            with pytest.raises(ProtocolError):
+                client.get_database_groups()
 
     def test_send_encrypted_called_with_correct_action(self):
         from unittest.mock import patch
         client = self._make_client()
-        with patch.object(client, "_send_encrypted", return_value=self._TREE) as mock_send:
+        with patch.object(client, "_send_encrypted", return_value={"groups": {"groups": []}}) as mock_send:
             client.get_database_groups()
         mock_send.assert_called_once_with("get-database-groups", {"action": "get-database-groups"})

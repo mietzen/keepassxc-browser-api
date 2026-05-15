@@ -9,7 +9,30 @@ Python library implementing the KeePassXC browser extension protocol (NaCl-encry
 - **`client.py`** — `BrowserClient`: handles connection, key exchange, association, and all API actions
 - **`config.py`** — `BrowserConfig`: persistent config (keypair + associations) at `~/.keepassxc/browser-api.json`
 - **`models.py`** — `Entry`, `Group` dataclasses for API responses
-- **`exceptions.py`** — Custom exceptions hierarchy (`KeePassXCError` base)
+- **`exceptions.py`** — Custom exceptions hierarchy (`KeePassXCError` base); all public methods raise on failure — they never return `False` or `None`
+
+### Exception Hierarchy
+
+All methods raise on failure. Exception types:
+
+| Exception | Raised when |
+|---|---|
+| `ConnectionError` | Cannot connect to the KeePassXC socket (not running / path not found) |
+| `DatabaseLockedError` | Database unlock timeout exceeded (polling `get-databasehash` timed out) |
+| `ProtocolError` | KeePassXC returned an error response in the JSON reply |
+| `KeePassXCError` | Base class — catch this to handle all library errors |
+
+`ProtocolError.error_code: int | None` carries the KeePassXC error enum value. Notable codes:
+- `6` `ACTION_CANCELLED_OR_DENIED` — user denied the access prompt
+- `15` `NO_LOGINS_FOUND` — caught internally by `get_logins()`; returns `[]` instead of raising
+- `19` `ACCESS_TO_ALL_ENTRIES_DENIED` — "Allow access to all entries" dialog denied
+
+All three exception classes are exported from the top-level package:
+```python
+from keepassxc_browser_api.exceptions import ConnectionError, DatabaseLockedError, ProtocolError
+# or
+from keepassxc_browser_api import ConnectionError, DatabaseLockedError, ProtocolError
+```
 
 ### KeePassXC Browser Protocol Details
 

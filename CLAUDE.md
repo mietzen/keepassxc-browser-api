@@ -67,11 +67,13 @@ Quick summary:
 ## Commands
 
 ```shell
-# Install
+# Install in editable mode with dev dependencies
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
 
 # Run tests
-pytest
+pytest --tb=short -q
 
 # Run tests with coverage
 pytest --cov=keepassxc_browser_api --cov-report=term-missing

@@ -444,3 +444,57 @@ class TestGetDatabaseGroups:
         with patch.object(client, "_send_encrypted", return_value={"groups": {"groups": []}}) as mock_send:
             client.get_database_groups()
         mock_send.assert_called_once_with("get-database-groups", {"action": "get-database-groups"})
+
+
+# ---------------------------------------------------------------------------
+# get_logins
+# ---------------------------------------------------------------------------
+
+
+class TestGetLogins:
+    """Tests for BrowserClient.get_logins()."""
+
+    def _make_client(self) -> BrowserClient:
+        config = BrowserConfig()
+        client = BrowserClient(config)
+        client._associated = True
+        client._server_public_key = "fake-server-pk"
+        client._socket = type("MockSock", (), {"gettimeout": lambda self: None, "settimeout": lambda self, t: None})()
+        return client
+
+    def _entry_dict(self, uuid: str = "e1", name: str = "Example", login: str = "user") -> dict:
+        return {"uuid": uuid, "name": name, "login": login, "password": "pw"}
+
+    def test_returns_entries(self):
+        from unittest.mock import patch
+        client = self._make_client()
+        payload = {"entries": [self._entry_dict()]}
+        with patch.object(client, "_send_encrypted", return_value=payload):
+            entries = client.get_logins("https://example.com")
+        assert len(entries) == 1
+        assert entries[0].uuid == "e1"
+
+    def test_no_logins_found_code15_returns_empty(self):
+        from unittest.mock import patch
+        client = self._make_client()
+        with patch.object(client, "_send_encrypted", side_effect=ProtocolError("no logins", error_code=15)):
+            entries = client.get_logins("https://example.com")
+        assert entries == []
+
+    def test_access_denied_empty_entries_raises_code6(self):
+        """Empty entries in a successful response = user denied access dialog."""
+        from unittest.mock import patch
+        client = self._make_client()
+        payload = {"entries": []}
+        with patch.object(client, "_send_encrypted", return_value=payload):
+            with pytest.raises(ProtocolError) as exc_info:
+                client.get_logins("https://example.com")
+        assert exc_info.value.error_code == 6
+
+    def test_other_protocol_error_propagates(self):
+        from unittest.mock import patch
+        client = self._make_client()
+        with patch.object(client, "_send_encrypted", side_effect=ProtocolError("oops", error_code=4)):
+            with pytest.raises(ProtocolError) as exc_info:
+                client.get_logins("https://example.com")
+        assert exc_info.value.error_code == 4

@@ -587,7 +587,19 @@ class BrowserClient:
                 return []
             raise
 
-        return [Entry.from_dict(e) for e in decrypted.get("entries", [])]
+        entries = decrypted.get("entries", [])
+        if "entries" in decrypted and not entries:
+            # KeePassXC returned a successful encrypted response with an empty
+            # entries list. This happens when the user closes or denies the
+            # "Allow access to entries" dialog — all candidate entries were
+            # found but none were approved.  Error code 6 maps to rc=4
+            # (access denied) in the CLI.
+            raise ProtocolError(
+                "Access to entries was denied by the user",
+                error_code=6,
+            )
+
+        return [Entry.from_dict(e) for e in entries]
 
     def get_totp(self, uuid: str) -> str | None:
         """Return the current TOTP code for an entry.

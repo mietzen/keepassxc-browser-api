@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import socket
+import sys
 import tempfile
 import time
 
@@ -19,7 +20,13 @@ import nacl.public
 import nacl.utils
 
 from .config import Association, BrowserConfig
-from .exceptions import AssociationError, ConnectionError, DatabaseLockedError, NotAssociatedError, ProtocolError
+from .exceptions import (
+    AssociationError,
+    ConnectionError,
+    DatabaseLockedError,
+    NotAssociatedError,
+    ProtocolError,
+)
 from .models import Entry, Group
 
 logger = logging.getLogger(__name__)
@@ -33,7 +40,9 @@ def _get_keepassxc_socket_path() -> str:
     xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", "")
     if xdg_runtime:
         flatpak_path = os.path.join(
-            xdg_runtime, "app", "org.keepassxc.KeePassXC",
+            xdg_runtime,
+            "app",
+            "org.keepassxc.KeePassXC",
             "org.keepassxc.KeePassXC.BrowserServer",
         )
         if os.path.exists(flatpak_path):
@@ -92,7 +101,7 @@ class BrowserClient:
 
     def __init__(self, config: BrowserConfig):
         self.config = config
-        self._socket: socket.socket | None = None
+        self._socket = None
         self._server_public_key: nacl.public.PublicKey | None = None
         self._associated: bool = False
 
@@ -123,12 +132,19 @@ class BrowserClient:
         """
         path = _get_keepassxc_socket_path()
         try:
-            self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self._socket.settimeout(5.0)
-            self._socket.connect(path)
+            if sys.platform == "win32":
+                from .windows import NativeMessagingSocket
+
+                self._socket = NativeMessagingSocket()
+            else:
+                self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self._socket.settimeout(5.0)
+                self._socket.connect(path)
             logger.debug("Connected to KeePassXC at %s", path)
         except OSError as e:
-            logger.debug("Cannot connect to KeePassXC browser socket at %s: %s", path, e)
+            logger.debug(
+                "Cannot connect to KeePassXC browser socket at %s: %s", path, e
+            )
             self._socket = None
             raise ConnectionError(f"Cannot connect to KeePassXC: {e}") from e
 
@@ -164,7 +180,9 @@ class BrowserClient:
                 self.trigger_unlock()
                 # trigger_unlock reconnects and re-exchanges keys internally
                 if not self._run_test_associate():
-                    raise AssociationError("All stored associations are invalid — re-run setup()")
+                    raise AssociationError(
+                        "All stored associations are invalid — re-run setup()"
+                    )
 
     def _ensure_keys(self) -> None:
         """Ensure connection and key exchange only (no association check).
@@ -258,7 +276,9 @@ class BrowserClient:
             logger.error("Failed to decrypt message: %s", e)
             return None
 
-    def _send_encrypted(self, action: str, inner: dict, *, timeout: float | None = None) -> dict:
+    def _send_encrypted(
+        self, action: str, inner: dict, *, timeout: float | None = None
+    ) -> dict:
         """Send an encrypted action message and return the decrypted response.
 
         Automatically connects and performs key exchange if needed.
@@ -289,7 +309,9 @@ class BrowserClient:
         if "errorCode" in response:
             error_code = int(response["errorCode"])
             error_msg = response.get("error", "unknown error")
-            logger.debug("Error response for %s: %s (code %s)", action, error_msg, error_code)
+            logger.debug(
+                "Error response for %s: %s (code %s)", action, error_msg, error_code
+            )
             raise ProtocolError(
                 f"KeePassXC error for '{action}': {error_msg} (code {error_code})",
                 error_code=error_code,
@@ -336,7 +358,9 @@ class BrowserClient:
         server_pk_b64 = response.get("publicKey")
         if not server_pk_b64:
             logger.debug("No server public key in response")
-            raise ConnectionError("Key exchange failed: no server public key in response")
+            raise ConnectionError(
+                "Key exchange failed: no server public key in response"
+            )
 
         self._server_public_key = nacl.public.PublicKey(_b64decode(server_pk_b64))
         self._associated = False  # KeePassXC resets m_associated on key exchange
@@ -768,5 +792,3 @@ class BrowserClient:
         }
         response = self._send_json(msg)
         return response is not None and "errorCode" not in response
-
-

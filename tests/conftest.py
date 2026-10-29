@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import tempfile
 
 import pytest
@@ -15,6 +16,8 @@ def short_tmp(tmp_path):
     macOS tmp_path is very long and exceeds AF_UNIX path limits (~104 chars).
     This fixture creates a short symlink in /tmp pointing to tmp_path.
     """
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("Unix socket fixture is not available on Windows")
     link = tempfile.mktemp(prefix="kba-", dir="/tmp")
     os.symlink(str(tmp_path), link)
     yield link

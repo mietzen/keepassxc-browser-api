@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from pathlib import Path
 
 import pytest
 
-from keepassxc_browser_api.config import Association, BrowserConfig, DEFAULT_UNLOCK_TIMEOUT
+from keepassxc_browser_api.config import (
+    Association,
+    BrowserConfig,
+    DEFAULT_UNLOCK_TIMEOUT,
+)
 
 
 class TestAssociation:
@@ -53,7 +58,8 @@ class TestBrowserConfig:
 
         assert config_path.exists()
         mode = config_path.stat().st_mode
-        assert not (mode & 0o077), "Config file should be owner-only (0600)"
+        if os.name != "nt":
+            assert not (mode & 0o077), "Config file should be owner-only (0600)"
 
         loaded = BrowserConfig.load(config_path)
         assert loaded.client_public_key == "mypubkey"
@@ -63,6 +69,9 @@ class TestBrowserConfig:
         config = BrowserConfig.load(tmp_path / "nonexistent.json")
         assert config.client_public_key == ""
 
+    @pytest.mark.skipif(
+        os.name == "nt", reason="POSIX permission bits do not describe Windows ACLs"
+    )
     def test_load_warns_on_insecure_permissions(self, tmp_path, caplog):
         config_path = tmp_path / "browser-api.json"
         config = BrowserConfig(client_public_key="pk", client_secret_key="sk")
@@ -71,6 +80,7 @@ class TestBrowserConfig:
         config_path.chmod(0o644)
 
         import logging
+
         with caplog.at_level(logging.WARNING, logger="keepassxc_browser_api.config"):
             BrowserConfig.load(config_path)
 

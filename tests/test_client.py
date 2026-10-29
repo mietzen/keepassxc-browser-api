@@ -19,7 +19,12 @@ from keepassxc_browser_api.client import (
     CLIENT_ID,
 )
 from keepassxc_browser_api.config import Association, BrowserConfig
-from keepassxc_browser_api.exceptions import AssociationError, ConnectionError, NotAssociatedError, ProtocolError
+from keepassxc_browser_api.exceptions import (
+    AssociationError,
+    ConnectionError,
+    NotAssociatedError,
+    ProtocolError,
+)
 from keepassxc_browser_api.models import Entry, Group
 
 
@@ -96,10 +101,12 @@ class TestBrowserClientInit:
 
 
 class TestBrowserClientConnect:
+    @pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="Unix socket path test")
     def test_connect_nonexistent_socket(self):
         config = BrowserConfig()
         client = BrowserClient(config)
         import keepassxc_browser_api.client as bc
+
         original = bc._get_keepassxc_socket_path
         bc._get_keepassxc_socket_path = lambda: "/tmp/nonexistent-keepassxc-test.sock"
         try:
@@ -177,7 +184,9 @@ class MockKeePassXC:
             "success": "true",
         }
 
-    def encrypt_response(self, client_public_key_b64: str, inner: dict, nonce_b64: str) -> tuple[str, str]:
+    def encrypt_response(
+        self, client_public_key_b64: str, inner: dict, nonce_b64: str
+    ) -> tuple[str, str]:
         """Encrypt an inner dict for sending back to the client."""
         client_pk = nacl.public.PublicKey(_b64decode(client_public_key_b64))
         box = nacl.public.Box(self._server_key, client_pk)
@@ -203,6 +212,7 @@ class TestChangePublicKeys:
         server.start()
 
         import keepassxc_browser_api.client as bc
+
         original = bc._get_keepassxc_socket_path
         bc._get_keepassxc_socket_path = lambda: sock_path
         try:
@@ -224,6 +234,7 @@ class TestChangePublicKeys:
         server.start()
 
         import keepassxc_browser_api.client as bc
+
         original = bc._get_keepassxc_socket_path
         bc._get_keepassxc_socket_path = lambda: sock_path
         try:
@@ -234,7 +245,6 @@ class TestChangePublicKeys:
             bc._get_keepassxc_socket_path = original
             client.disconnect()
             server.stop()
-
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +279,9 @@ class TestEntryModel:
         assert entry.totp == "123456"
 
     def test_roundtrip(self):
-        original = Entry(uuid="u1", name="Test", login="user", password="pw", group="Root")
+        original = Entry(
+            uuid="u1", name="Test", login="user", password="pw", group="Root"
+        )
         restored = Entry.from_dict(original.to_dict())
         assert restored.uuid == original.uuid
         assert restored.name == original.name
@@ -289,9 +301,13 @@ class TestGroupModel:
             "name": "Root",
             "children": [
                 {"uuid": "g2", "name": "Work", "children": []},
-                {"uuid": "g3", "name": "Personal", "children": [
-                    {"uuid": "g4", "name": "Finance", "children": []},
-                ]},
+                {
+                    "uuid": "g3",
+                    "name": "Personal",
+                    "children": [
+                        {"uuid": "g4", "name": "Finance", "children": []},
+                    ],
+                },
             ],
         }
         group = Group.from_dict(d)
@@ -322,7 +338,11 @@ class TestContextManager:
     def test_context_manager_disconnects(self):
         config = BrowserConfig()
         client = BrowserClient(config)
-        mock_sock = type("MockSock", (), {"close": lambda self: None, "gettimeout": lambda self: None})()
+        mock_sock = type(
+            "MockSock",
+            (),
+            {"close": lambda self: None, "gettimeout": lambda self: None},
+        )()
         client._socket = mock_sock
         client._server_public_key = "fake"
         client._associated = True
@@ -341,18 +361,16 @@ class TestContextManager:
         client._associated = True
         client._ensure_session()
 
-    def test_ensure_session_no_socket(self):
+    def test_ensure_session_no_socket(self, monkeypatch):
         config = BrowserConfig()
         client = BrowserClient(config)
-        # connect will fail (no real socket)
-        import keepassxc_browser_api.client as bc
-        original = bc._get_keepassxc_socket_path
-        bc._get_keepassxc_socket_path = lambda: "/tmp/nonexistent-keepassxc-test.sock"
-        try:
-            with pytest.raises(ConnectionError):
-                client._ensure_session()
-        finally:
-            bc._get_keepassxc_socket_path = original
+
+        def unavailable():
+            raise ConnectionError("KeePassXC is unavailable")
+
+        monkeypatch.setattr(client, "connect", unavailable)
+        with pytest.raises(ConnectionError):
+            client._ensure_session()
 
 
 # ---------------------------------------------------------------------------
@@ -397,11 +415,16 @@ class TestGetDatabaseGroups:
         client = BrowserClient(config)
         client._associated = True
         client._server_public_key = "fake-server-pk"
-        client._socket = type("MockSock", (), {"gettimeout": lambda self: None, "settimeout": lambda self, t: None})()
+        client._socket = type(
+            "MockSock",
+            (),
+            {"gettimeout": lambda self: None, "settimeout": lambda self, t: None},
+        )()
         return client
 
     def test_returns_root_group_tree(self):
         from unittest.mock import patch
+
         client = self._make_client()
         with patch.object(client, "_send_encrypted", return_value=self._TREE):
             groups = client.get_database_groups()
@@ -413,6 +436,7 @@ class TestGetDatabaseGroups:
 
     def test_nested_children(self):
         from unittest.mock import patch
+
         client = self._make_client()
         with patch.object(client, "_send_encrypted", return_value=self._TREE):
             groups = client.get_database_groups()
@@ -424,6 +448,7 @@ class TestGetDatabaseGroups:
 
     def test_flat_list_traversal(self):
         from unittest.mock import patch
+
         client = self._make_client()
         with patch.object(client, "_send_encrypted", return_value=self._TREE):
             groups = client.get_database_groups()
@@ -433,17 +458,27 @@ class TestGetDatabaseGroups:
 
     def test_raises_on_failure(self):
         from unittest.mock import patch
+
         client = self._make_client()
-        with patch.object(client, "_send_encrypted", side_effect=ProtocolError("test error", error_code=1)):
+        with patch.object(
+            client,
+            "_send_encrypted",
+            side_effect=ProtocolError("test error", error_code=1),
+        ):
             with pytest.raises(ProtocolError):
                 client.get_database_groups()
 
     def test_send_encrypted_called_with_correct_action(self):
         from unittest.mock import patch
+
         client = self._make_client()
-        with patch.object(client, "_send_encrypted", return_value={"groups": {"groups": []}}) as mock_send:
+        with patch.object(
+            client, "_send_encrypted", return_value={"groups": {"groups": []}}
+        ) as mock_send:
             client.get_database_groups()
-        mock_send.assert_called_once_with("get-database-groups", {"action": "get-database-groups"})
+        mock_send.assert_called_once_with(
+            "get-database-groups", {"action": "get-database-groups"}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -459,14 +494,21 @@ class TestGetLogins:
         client = BrowserClient(config)
         client._associated = True
         client._server_public_key = "fake-server-pk"
-        client._socket = type("MockSock", (), {"gettimeout": lambda self: None, "settimeout": lambda self, t: None})()
+        client._socket = type(
+            "MockSock",
+            (),
+            {"gettimeout": lambda self: None, "settimeout": lambda self, t: None},
+        )()
         return client
 
-    def _entry_dict(self, uuid: str = "e1", name: str = "Example", login: str = "user") -> dict:
+    def _entry_dict(
+        self, uuid: str = "e1", name: str = "Example", login: str = "user"
+    ) -> dict:
         return {"uuid": uuid, "name": name, "login": login, "password": "pw"}
 
     def test_returns_entries(self):
         from unittest.mock import patch
+
         client = self._make_client()
         payload = {"entries": [self._entry_dict()]}
         with patch.object(client, "_send_encrypted", return_value=payload):
@@ -476,14 +518,20 @@ class TestGetLogins:
 
     def test_no_logins_found_code15_returns_empty(self):
         from unittest.mock import patch
+
         client = self._make_client()
-        with patch.object(client, "_send_encrypted", side_effect=ProtocolError("no logins", error_code=15)):
+        with patch.object(
+            client,
+            "_send_encrypted",
+            side_effect=ProtocolError("no logins", error_code=15),
+        ):
             entries = client.get_logins("https://example.com")
         assert entries == []
 
     def test_access_denied_empty_entries_raises_code6(self):
         """Empty entries in a successful response = user denied access dialog."""
         from unittest.mock import patch
+
         client = self._make_client()
         payload = {"entries": []}
         with patch.object(client, "_send_encrypted", return_value=payload):
@@ -493,8 +541,11 @@ class TestGetLogins:
 
     def test_other_protocol_error_propagates(self):
         from unittest.mock import patch
+
         client = self._make_client()
-        with patch.object(client, "_send_encrypted", side_effect=ProtocolError("oops", error_code=4)):
+        with patch.object(
+            client, "_send_encrypted", side_effect=ProtocolError("oops", error_code=4)
+        ):
             with pytest.raises(ProtocolError) as exc_info:
                 client.get_logins("https://example.com")
         assert exc_info.value.error_code == 4

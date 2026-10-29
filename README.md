@@ -1,6 +1,6 @@
 # KeePassXC Browser API
 
-Python library for communicating with [KeePassXC](https://keepassxc.org/) via the browser extension protocol (NaCl-encrypted JSON over a Unix socket).
+Python library for communicating with [KeePassXC](https://keepassxc.org/) via the browser extension protocol (NaCl-encrypted JSON over a Unix socket, or KeePassXC's native messaging proxy on Windows).
 
 ## Features
 
@@ -8,7 +8,7 @@ Python library for communicating with [KeePassXC](https://keepassxc.org/) via th
 - One-time association flow (user approves in KeePassXC window)
 - Biometric unlock (TouchID / system unlock) via `triggerUnlock`
 - Full browser API support: read entries, write entries, manage groups, TOTP, password generation, lock database
-- Cross-platform: macOS and Linux
+- Cross-platform: macOS, Linux, and Windows
 - Shared config (`~/.keepassxc/browser-api.json`) — associate once, use with all tools
 
 ## Projects using KeePassXC Browser API
@@ -21,6 +21,17 @@ Python library for communicating with [KeePassXC](https://keepassxc.org/) via th
 ```shell
 pip install keepassxc-browser-api
 ```
+
+### Windows
+
+Install KeePassXC and enable Browser Integration. The Windows transport uses the
+bundled `keepassxc-proxy.exe`, which handles the connection to KeePassXC's named
+pipe. It finds the proxy through native messaging registrations or the standard
+Program Files installation directory; no extra Python dependencies are needed.
+The same encrypted protocol, association prompts, and credential-access prompts
+apply on every platform. No database password is passed to the proxy.
+Newly saved API configuration files use a current-user-only Windows ACL instead
+of relying on POSIX permission bits, which Windows does not enforce.
 
 ## Quick start
 

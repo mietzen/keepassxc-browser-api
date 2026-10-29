@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import stat
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,7 +25,7 @@ class Association:
 
     id: str
     id_key: str  # base64-encoded identity public key
-    key: str     # base64-encoded identity secret key
+    key: str  # base64-encoded identity secret key
 
     def to_dict(self) -> dict:
         return {"id": self.id, "id_key": self.id_key, "key": self.key}
@@ -75,15 +76,19 @@ class BrowserConfig:
         os.chmod(str(path.parent), stat.S_IRWXU)
         # Write to a temp file with 0600 permissions, then atomically rename
         # to avoid a race window where secrets are world-readable.
-        tmp_path = path.with_suffix(".tmp")
-        fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+        tmp_path = Path(temporary)
         try:
             with os.fdopen(fd, "w") as f:
+                if os.name == "nt":
+                    from .windows import protect_config_file
+
+                    protect_config_file(tmp_path)
                 json.dump(self.to_dict(), f, indent=2)
+            os.replace(tmp_path, path)
         except BaseException:
             os.unlink(tmp_path)
             raise
-        os.replace(tmp_path, path)
 
     @classmethod
     def load(cls, path: Path | None = None) -> BrowserConfig:
@@ -91,11 +96,13 @@ class BrowserConfig:
         if not path.exists():
             return cls()
         mode = path.stat().st_mode
-        if mode & 0o077:
+        if os.name != "nt" and mode & 0o077:
             logger.warning(
                 "Config file %s has insecure permissions %o; expected 0600. "
                 "Fix with: chmod 600 %s",
-                path, mode & 0o777, path,
+                path,
+                mode & 0o777,
+                path,
             )
         with open(path) as f:
             return cls.from_dict(json.load(f))
